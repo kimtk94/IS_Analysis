@@ -43,3 +43,16 @@ python scripts/00_run_full_audit_final.py --config config/audit_config_colab_dri
 ```
 
 `config/audit_config_colab_drive.json` points `project_root` at `/content/drive/MyDrive/IS_Analysis_V2` for real manifests/raw data/results. `scripts/colab_smoke_test.sh` sets `SMOKE_ROOT=/content/is_analysis_smoke_fixture`, so synthetic tar files and fixture audit outputs are created outside Drive and can be discarded after the smoke test.
+
+## Colab real-data download helpers
+
+After mounting Drive and moving to `/content/drive/MyDrive/IS_Analysis_V2`, use these helpers to populate real raw-data folders on Drive. These commands are for Colab/data setup only, not for Codex PR review:
+
+```bash
+export PROJECT_ROOT=/content/drive/MyDrive/IS_Analysis_V2
+export DECODE_DOWNLOAD_TOKEN='your-decode-download-token'
+bash scripts/colab_download_decode_ferkingstad_2021.sh
+python scripts/colab_download_gigastroke_gwas.py --ancestry ALL
+```
+
+The deCODE helper writes to `data/rawdata/pqtl/decode_ferkingstad_2021/aptamer_sumstats`. The GIGASTROKE helper writes to `data/rawdata/outcome/gigastroke_gwas_catalog`.

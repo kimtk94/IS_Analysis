@@ -25,6 +25,8 @@ MINIMUM_REVIEW_FILES = [
     "AGENTS.md",
     "scripts/codex_smoke_test.sh",
     "scripts/colab_smoke_test.sh",
+    "scripts/colab_download_decode_ferkingstad_2021.sh",
+    "scripts/colab_download_gigastroke_gwas.py",
     "tests/fixtures/audit_config.json",
     "tests/fixtures/master_manifest.tsv",
     "tests/fixtures/site_metadata.tsv",
