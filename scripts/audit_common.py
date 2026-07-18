@@ -13,6 +13,7 @@ QC_DIR = PROJECT_ROOT / "results" / "qc"
 REQUIRED_DIRS = ["scripts", "R", "config", "results/qc", "Backup", "scripts/Backup"]
 MINIMUM_REVIEW_FILES = [
     "scripts/00_run_full_audit.py",
+    "scripts/00_run_full_audit_final.py",
     "scripts/audit_common.py",
     "scripts/01_build_expected_manifest.py",
     "scripts/02_audit_raw_downloads.py",
