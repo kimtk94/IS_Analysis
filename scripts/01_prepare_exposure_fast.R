@@ -24,6 +24,9 @@ no_cis_filter <- has_flag("--no-cis-filter")
 no_p_filter <- has_flag("--no-p-filter")
 no_f_filter <- has_flag("--no-f-filter")
 force <- has_flag("--force")
+test_mode <- has_flag("--test")
+max_file_lines <- as.integer(get_arg("--max-file-lines", if (test_mode) "200" else "0"))
+if (is.na(max_file_lines) || max_file_lines < 0) stop("[ERROR] --max-file-lines must be a non-negative integer")
 
 if (is.null(gene_file)) stop("[ERROR] --gene-file is required")
 if (!file.exists(gene_file)) stop("[ERROR] gene file does not exist: ", gene_file)
@@ -54,7 +57,7 @@ if (!is.null(source_file_list)) {
   if (!length(allowed_source_files)) stop("[ERROR] source file list is empty: ", source_file_list)
 }
 
-msg("[INFO] batch_id=", batch_id, " genes=", length(target_genes), " eur_first=", eur_first, " copy_to_local=", copy_to_local)
+msg("[INFO] batch_id=", batch_id, " genes=", length(target_genes), " eur_first=", eur_first, " copy_to_local=", copy_to_local, " test=", test_mode, " max_file_lines=", max_file_lines)
 msg("[INFO] rawdir=", rawdir, " outdir=", outdir, " tmpdir=", tmp_root)
 if (!is.null(allowed_source_files)) msg("[INFO] exact source_file filter enabled: ", length(allowed_source_files), " files")
 
@@ -282,6 +285,10 @@ read_pqtl_from_tar_fast <- function(tar_file) {
   header <- fread(cmd = cmd, nrows = 0, showProgress = FALSE, data.table = TRUE)
   select_cols <- choose_needed_columns(names(header))
   if (!length(select_cols)) stop("Could not identify useful columns in ", basename(tar_file))
+  if (max_file_lines > 0) {
+    data_rows <- max(0L, max_file_lines - 1L)
+    return(fread(cmd = cmd, select = select_cols, nrows = data_rows, showProgress = FALSE, data.table = TRUE))
+  }
   fread(cmd = cmd, select = select_cols, showProgress = FALSE, data.table = TRUE)
 }
 
