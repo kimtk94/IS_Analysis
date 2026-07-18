@@ -17,8 +17,6 @@ MINIMUM_REVIEW_FILES = [
     "scripts/01_build_expected_manifest.py",
     "scripts/02_audit_raw_downloads.py",
     "scripts/01_prepare_exposure_fast.R",
-    "scripts/Rawdatacheck.py",
-    "scripts/run_recovery_prepare_exposure.py",
     "scripts/patch_empty_exposure_outputs.py",
     "scripts/patch_empty_output_current.py",
     "scripts/patch_runner_output_exists.py",
