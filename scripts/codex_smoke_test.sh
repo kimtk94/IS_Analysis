@@ -43,7 +43,7 @@ echo "[TEST] Python syntax"
 "${PYTHON_BIN}" -m py_compile \
   scripts/00_run_full_audit_final.py \
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
-  scripts/audit_common.py
+  scripts/colab_download_gigastroke_gwas.py
 
 echo "[TEST] Fixture config JSON"
 "${PYTHON_BIN}" -m json.tool "${FIXTURE_CONFIG}" >/dev/null
