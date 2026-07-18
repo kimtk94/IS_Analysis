@@ -16,13 +16,38 @@ EUR	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eur.tar
 EAS	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eas.tar		
 ```
 
-`ancestry`, `gene_symbol`, `source_file`, and `url` are required. `expected_size_bytes`
-and `sha256` are optional but strongly recommended when the source provides them.
+`ancestry`, `gene_symbol`, `source_file`, and `url` are required. `expected_size_bytes`,
+`sha256`, and `md5` are optional but strongly recommended when the source provides
+them. A `synapse_id` column makes the runner download through `synapseclient`
+rather than treating the human-readable Synapse URL as a direct archive URL.
 Every selected gene must have at least one EUR and one EAS row; genes without a
 pair are intentionally excluded. This TSV is also the **raw-data lifecycle
 manifest**: when cleanup is enabled, the runner writes `pipeline_batch_id`,
 `raw_lifecycle`, `raw_cleanup_at`, and `raw_cleanup_reason` back into this same
 file. Keep it on Drive and do not delete or replace it while a run is active.
+
+### Build the manifest from Synapse metadata
+
+Do not manually fill archive sizes or hashes. Start with a small target TSV that
+contains `ancestry`, `gene_symbol`, and `source_file` (and `synapse_id` when two
+Synapse files have the same name). In the data-setup environment, build the
+download manifest directly from a Synapse folder's file-handle metadata:
+
+```bash
+export SYNAPSE_AUTH_TOKEN='your-personal-access-token'
+python3 scripts/build_ukb_ppp_download_manifest.py \
+  --targets data/metadata/ukb_ppp_targets.tsv \
+  --synapse-parent-id syn12345678 \
+  --output data/metadata/ukb_ppp_download_manifest.tsv
+```
+
+This records each file's Synapse ID, canonical Synapse URL, byte size, and MD5
+without downloading the archive. For a reproducible or offline review, export
+the folder metadata from Synapse and substitute `--synapse-metadata-file` for
+`--synapse-parent-id`. The script accepts the usual Synapse field names
+(`id`, `name`, `dataFileSizeBytes`, `contentMd5`) and writes the runner-ready
+manifest. The folder-query and subsequent downloads require `synapseclient` and
+Synapse authentication; they are setup/runtime operations, not review checks.
 
 First create and review the plan without downloading:
 

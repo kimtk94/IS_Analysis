@@ -122,7 +122,7 @@ def paired_genes_from_raw(audit: Any) -> list[str]:
     return sorted(gene for gene, ancestries in groups.items() if set(ANCESTRIES).issubset(ancestries))
 
 
-def verify_archive(path: Path, expected_size: str, expected_sha256: str) -> tuple[bool, str, str]:
+def verify_archive(path: Path, expected_size: str, expected_sha256: str, expected_md5: str = "") -> tuple[bool, str, str]:
     if not path.exists() or path.stat().st_size == 0:
         return False, "missing_or_empty", ""
     if expected_size:
@@ -141,6 +141,13 @@ def verify_archive(path: Path, expected_size: str, expected_sha256: str) -> tupl
     observed_sha256 = sha256_file(path) if expected_sha256 else ""
     if expected_sha256 and observed_sha256.lower() != expected_sha256.lower():
         return False, "sha256_mismatch", observed_sha256
+    if expected_md5:
+        digest = hashlib.md5(usedforsecurity=False)
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest().lower() != expected_md5.lower():
+            return False, "md5_mismatch", observed_sha256
     return True, "verified", observed_sha256
 
 
@@ -149,6 +156,20 @@ def download_one(row: dict[str, str], destination: Path) -> tuple[bool, str]:
     completed = destination.exists() and ".part" not in destination.name
     if completed:
         return True, "already_present"
+    synapse_id = row.get("synapse_id", "").strip()
+    if synapse_id:
+        if importlib.util.find_spec("synapseclient") is None:
+            return False, "synapseclient_not_installed"
+        import synapseclient
+        try:
+            syn = synapseclient.Synapse()
+            syn.login(authToken=os.environ.get("SYNAPSE_AUTH_TOKEN") or None, silent=not bool(os.environ.get("SYNAPSE_AUTH_TOKEN")))
+            downloaded = Path(syn.get(synapse_id, downloadLocation=str(destination.parent), ifcollision="overwrite.local").path)
+            if downloaded.resolve() != destination.resolve():
+                os.replace(downloaded, destination)
+            return True, "downloaded_from_synapse"
+        except Exception as error:  # Synapse client errors vary by version and authentication state.
+            return False, f"synapse_download_failed: {str(error).replace(chr(10), ' ')[:500]}"
     curl = shutil.which("curl")
     if not curl:
         return False, "curl_not_found"
@@ -199,7 +220,7 @@ def remove_raw_files(raw_files: list[Path], status_path: Path) -> list[dict[str,
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
-    parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256.")
+    parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256, md5, synapse_id.")
     parser.add_argument("--outdir", default="results/exposure_batches")
     parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
     parser.add_argument("--batch-size", type=int, default=10)
@@ -277,7 +298,7 @@ def main() -> None:
                     download_failed = True
             if source["source_file"]:
                 raw_files_by_ancestry[ancestry].append(destination)
-                ok, verification, observed_sha = verify_archive(destination, source.get("expected_size_bytes", ""), source.get("sha256", ""))
+                ok, verification, observed_sha = verify_archive(destination, source.get("expected_size_bytes", ""), source.get("sha256", ""), source.get("md5", ""))
             else:
                 matches = list((base / ancestry).glob(f"{gene}_*.tar"))
                 raw_files_by_ancestry[ancestry].extend(matches)
