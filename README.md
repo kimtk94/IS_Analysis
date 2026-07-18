@@ -36,11 +36,19 @@ python3 scripts/ukb_ppp_batch_manifest_runner_fast.py \
   --batch-size 10 \
   --p-threshold 5e-8 \
   --run \
+  --delete-raw-after-processing \
   --stop-on-error
 ```
 
 To safely resume a single failed batch, use `--only-batch batch_003`. To only
 download and validate archives, add `--download-only` with `--run`.
+
+`--delete-raw-after-processing` is the production disk-space cleanup step. It
+deletes an archive only after both ancestry batch outputs exist and the R
+per-source status records that archive as successfully processed (including a
+valid empty result after filtering). If an R run, output, or source status is
+incomplete, the archive is retained and the batch is marked
+`completed_raw_retained` rather than being deleted.
 
 ### Outputs and evidence
 
@@ -50,6 +58,8 @@ download and validate archives, add `--download-only` with `--run`.
 - Batch state: `results/qc/batch_pipeline/batch_manifest.tsv`
 - Per-batch download/verification evidence:
   `results/qc/batch_pipeline/downloads/batch_###.tsv`
+- Raw deletion/retention evidence (when cleanup is requested):
+  `results/qc/batch_pipeline/raw_cleanup/batch_###.tsv`
 - Per-gene processing state:
   `results/exposure_batches/{EUR,EAS}/logs/batch_###_gene_status.tsv`
 

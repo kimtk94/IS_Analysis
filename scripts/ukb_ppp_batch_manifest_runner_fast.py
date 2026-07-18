@@ -145,6 +145,42 @@ def download_one(row: dict[str, str], destination: Path) -> tuple[bool, str]:
     return True, "downloaded"
 
 
+def processing_status_allows_cleanup(status_path: Path, raw_files: list[Path]) -> tuple[bool, str]:
+    """Require a successful terminal R status for every archive before deletion."""
+    if not status_path.exists():
+        return False, "missing_gene_status"
+    with status_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    successful = {"completed", "completed_existing", "no_variants_after_filter"}
+    status_by_tar = {
+        str(Path(row["tar_file"]).resolve()): row.get("status", "")
+        for row in rows
+        if row.get("tar_file")
+    }
+    incomplete = [
+        path.name for path in raw_files
+        if status_by_tar.get(str(path.resolve())) not in successful
+    ]
+    if incomplete:
+        return False, "incomplete_processing_status: " + ",".join(incomplete)
+    return True, "all_sources_processed"
+
+
+def remove_raw_files(raw_files: list[Path], status_path: Path) -> list[dict[str, str]]:
+    """Delete only files backed by successful per-source processing status."""
+    allowed, reason = processing_status_allows_cleanup(status_path, raw_files)
+    if not allowed:
+        return [{"raw_file": str(path), "action": "retained", "reason": reason} for path in raw_files]
+    rows = []
+    for path in raw_files:
+        try:
+            path.unlink()
+            rows.append({"raw_file": str(path), "action": "deleted", "reason": "all_sources_processed"})
+        except OSError as error:
+            rows.append({"raw_file": str(path), "action": "delete_failed", "reason": str(error)})
+    return rows
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
@@ -158,6 +194,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
     parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
     parser.add_argument("--download-only", action="store_true")
+    parser.add_argument(
+        "--delete-raw-after-processing",
+        action="store_true",
+        help="Delete a batch's verified raw archives only after both ancestry outputs and every per-source status succeed.",
+    )
     parser.add_argument("--run", action="store_true", help="Run downloads and exposure preparation. Without this, write the plan only.")
     parser.add_argument("--stop-on-error", action="store_true")
     return parser.parse_args()
@@ -181,7 +222,7 @@ def main() -> None:
     for offset in range(0, len(genes), args.batch_size):
         batch_genes = genes[offset : offset + args.batch_size]
         batch_id = f"batch_{offset // args.batch_size + 1:03d}"
-        rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
+        rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", "raw_cleanup": "not_requested", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
     batch_df = pd.DataFrame(rows)
     selected_batches = batch_df
     if args.only_batch:
@@ -206,6 +247,7 @@ def main() -> None:
                     source_rows.append({"gene_symbol": gene, "ancestry": ancestry, "source_file": "", "url": ""})
 
         audit_rows = []
+        raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
         download_failed = False
         for source in source_rows:
             ancestry, gene = source["ancestry"], source["gene_symbol"]
@@ -217,9 +259,11 @@ def main() -> None:
                 if not ok:
                     download_failed = True
             if source["source_file"]:
+                raw_files_by_ancestry[ancestry].append(destination)
                 ok, verification, observed_sha = verify_archive(destination, source.get("expected_size_bytes", ""), source.get("sha256", ""))
             else:
                 matches = list((base / ancestry).glob(f"{gene}_*.tar"))
+                raw_files_by_ancestry[ancestry].extend(matches)
                 ok, verification, observed_sha = bool(matches), "raw_archive_found" if matches else "missing_raw_archive", ""
             audit_rows.append({"timestamp": now(), "batch_id": batch_id, "gene_symbol": gene, "ancestry": ancestry, "source_file": source["source_file"], "destination": str(destination), "action": action, "download_message": message, "verified": ok, "verification": verification, "observed_sha256": observed_sha})
             if not ok:
@@ -251,7 +295,23 @@ def main() -> None:
             if result.returncode or not output.exists():
                 failed = True
                 print(f"[ERROR] {batch_id} {ancestry}; see {log}")
-        batch_df.loc[index, "status"] = "processing_failed" if failed else "completed"
+        if failed:
+            batch_df.loc[index, "status"] = "processing_failed"
+            batch_df.loc[index, "raw_cleanup"] = "retained_processing_failed"
+        elif args.delete_raw_after_processing:
+            cleanup_rows = []
+            for ancestry in ANCESTRIES:
+                status_path = outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv"
+                for row in remove_raw_files(raw_files_by_ancestry[ancestry], status_path):
+                    cleanup_rows.append({"batch_id": batch_id, "ancestry": ancestry, **row})
+            cleanup_path = qc_dir / "raw_cleanup" / f"{batch_id}.tsv"
+            write_atomic(pd.DataFrame(cleanup_rows), cleanup_path)
+            cleanup_failed = any(row["action"] != "deleted" for row in cleanup_rows)
+            batch_df.loc[index, "status"] = "completed_raw_retained" if cleanup_failed else "completed_raw_deleted"
+            batch_df.loc[index, "raw_cleanup"] = str(cleanup_path)
+        else:
+            batch_df.loc[index, "status"] = "completed"
+            batch_df.loc[index, "raw_cleanup"] = "retained_flag_not_set"
         write_atomic(batch_df, manifest_path)
         if failed and args.stop_on_error:
             raise SystemExit(f"[ERROR] {batch_id} processing failed")
