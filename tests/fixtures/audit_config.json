@@ -1,0 +1,52 @@
+{
+  "project_root": ".",
+  "audit_output_dir": "/tmp/is_analysis_audit_fixture_outputs",
+  "existing_master_manifest": "tests/fixtures/master_manifest.tsv",
+  "tracking_manifest": "tests/fixtures/master_manifest.tsv",
+  "site_metadata_file": "tests/fixtures/site_metadata.tsv",
+  "raw_dirs": [
+    "/tmp/is_analysis_smoke_fixture/raw"
+  ],
+  "original_exposure_dir": "tests/fixtures/exposure_original",
+  "recovery_exposure_dir": "tests/fixtures/exposure_recovery",
+  "batch_output_pattern": "exposure_{batch_id}.tsv",
+  "required_exposure_columns_any": [
+    [
+      "SNP",
+      "rsid",
+      "variant",
+      "variant_id"
+    ],
+    [
+      "beta",
+      "BETA",
+      "effect"
+    ],
+    [
+      "se",
+      "SE",
+      "standard_error"
+    ],
+    [
+      "pval",
+      "p",
+      "P",
+      "p_value"
+    ],
+    [
+      "effect_allele",
+      "EA",
+      "alt"
+    ],
+    [
+      "other_allele",
+      "OA",
+      "ref"
+    ]
+  ],
+  "minimum_raw_size_bytes": 1,
+  "calculate_sha256": false,
+  "check_tar_integrity": true,
+  "read_output_rows": true,
+  "site_metadata_column_map": {}
+}
