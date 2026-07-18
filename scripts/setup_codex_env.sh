@@ -12,12 +12,16 @@
 #   PYTHON_BIN=python3
 #   REQUIREMENTS_FILE=requirements.txt
 #   CRAN_REPO=https://cloud.r-project.org
+#   PIP_INDEX_URL=https://pypi.org/simple
+#   PIP_ROOT_USER_ACTION=ignore
 
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements.txt}"
 CRAN_REPO="${CRAN_REPO:-https://cloud.r-project.org}"
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}"
+PIP_ROOT_USER_ACTION="${PIP_ROOT_USER_ACTION:-ignore}"
 
 if [[ ! -f "${REQUIREMENTS_FILE}" ]]; then
   echo "[ERROR] Missing Python requirements file: ${REQUIREMENTS_FILE}" >&2
@@ -25,8 +29,8 @@ if [[ ! -f "${REQUIREMENTS_FILE}" ]]; then
 fi
 
 echo "[INFO] Installing Python requirements from ${REQUIREMENTS_FILE}"
-"${PYTHON_BIN}" -m pip install --upgrade pip
-"${PYTHON_BIN}" -m pip install -r "${REQUIREMENTS_FILE}"
+"${PYTHON_BIN}" -m pip install --root-user-action="${PIP_ROOT_USER_ACTION}" --index-url "${PIP_INDEX_URL}" --no-cache-dir --upgrade pip
+"${PYTHON_BIN}" -m pip install --root-user-action="${PIP_ROOT_USER_ACTION}" --index-url "${PIP_INDEX_URL}" --no-cache-dir -r "${REQUIREMENTS_FILE}"
 
 if ! command -v Rscript >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then

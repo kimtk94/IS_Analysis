@@ -20,6 +20,7 @@ MINIMUM_REVIEW_FILES = [
     "scripts/01_prepare_exposure_fast.R",
     "scripts/setup_codex_env.sh",
     "requirements.txt",
+    "config/audit_config.json",
     "scripts/patch_empty_exposure_outputs.py",
     "scripts/patch_empty_output_current.py",
     "scripts/patch_runner_output_exists.py",

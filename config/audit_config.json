@@ -1,0 +1,26 @@
+{
+  "project_root": ".",
+  "audit_output_dir": "results/qc/final_audit",
+  "existing_master_manifest": "data/metadata/master_manifest.tsv",
+  "tracking_manifest": "data/metadata/tracking_manifest.tsv",
+  "site_metadata_file": "data/metadata/site_metadata.tsv",
+  "raw_dirs": [
+    "data/rawdata/pqtl/selected_targets"
+  ],
+  "original_exposure_dir": "results/exposure_batches",
+  "recovery_exposure_dir": "results/exposure_recovery_batches",
+  "batch_output_pattern": "exposure_{batch_id}.tsv",
+  "required_exposure_columns_any": [
+    ["SNP", "rsid", "variant", "variant_id"],
+    ["beta", "BETA", "effect"],
+    ["se", "SE", "standard_error"],
+    ["pval", "p", "P", "p_value"],
+    ["effect_allele", "EA", "alt"],
+    ["other_allele", "OA", "ref"]
+  ],
+  "minimum_raw_size_bytes": 1,
+  "calculate_sha256": false,
+  "check_tar_integrity": true,
+  "read_output_rows": true,
+  "site_metadata_column_map": {}
+}

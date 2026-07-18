@@ -16,4 +16,4 @@ The setup script installs Python dependencies from `requirements.txt`, ensures `
 
 ## Final legacy audit configuration
 
-The self-contained final audit entrypoint is `scripts/00_run_full_audit_final.py`. By default it expects `config/audit_config.json`; pass `--config /path/to/audit_config.json` when running against a Google Drive project copy. The audit writes evidence files only and does not execute MR or mutate raw data.
+The self-contained final audit entrypoint is `scripts/00_run_full_audit_final.py`. The committed `config/audit_config.json` uses `"project_root": "."` so it resolves paths from the repository root in Codex/GitHub containers. If running from a Google Drive checkout, first `cd` to that project directory or pass `--config /path/to/audit_config.json` with paths adjusted for that copy. The audit writes evidence files only and does not execute MR or mutate raw data.
