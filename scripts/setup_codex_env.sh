@@ -53,7 +53,10 @@ fi
 echo "[INFO] Verifying required executables and packages"
 "${PYTHON_BIN}" - <<'PY'
 import pandas
+import openpyxl
+
 print(f"[OK] pandas {pandas.__version__}")
+print(f"[OK] openpyxl {openpyxl.__version__}")
 PY
 Rscript -e 'cat("[OK] R ", as.character(getRversion()), "\n", sep = ""); packageVersion("data.table")'
 
