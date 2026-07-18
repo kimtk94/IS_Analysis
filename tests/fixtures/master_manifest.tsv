@@ -1,0 +1,3 @@
+batch_id	dataset_id	ancestry	source_file	do_not_redownload	pipeline_status	raw_retention_status
+batch_001	fixture_pqtl	EUR	ALPHA_P12345_OID1_v1_PANEL.tar	false	ready	retained
+batch_001	fixture_pqtl	EAS	ALPHA_P12345_OID1_v1_PANEL.tar	false	ready	retained
