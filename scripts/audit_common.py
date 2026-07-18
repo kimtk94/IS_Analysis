@@ -17,6 +17,12 @@ MINIMUM_REVIEW_FILES = [
     "scripts/01_build_expected_manifest.py",
     "scripts/02_audit_raw_downloads.py",
     "scripts/01_prepare_exposure_fast.R",
+    "scripts/Rawdatacheck.py",
+    "scripts/run_recovery_prepare_exposure.py",
+    "scripts/ukb_ppp_batch_manifest_runner_fast.py",
+    "scripts/patch_empty_exposure_outputs.py",
+    "scripts/patch_empty_output_current.py",
+    "scripts/patch_runner_output_exists.py",
     "scripts/Backup/01_prepare_exposure.R",
 ]
 QC_REQUIRED_GLOBS = [
@@ -57,7 +63,7 @@ def file_record(path: str | Path) -> FileRecord:
 def write_tsv(path: Path, rows: Iterable[dict[str, object]], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t", lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow(row)

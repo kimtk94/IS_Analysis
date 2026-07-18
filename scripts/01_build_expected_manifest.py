@@ -8,7 +8,7 @@ from audit_common import MINIMUM_REVIEW_FILES, QC_DIR, REQUIRED_DIRS, file_recor
 def build_manifest() -> None:
     rows = []
     for directory in REQUIRED_DIRS:
-        rows.append({"path": directory, "kind": "directory", "required": "true"})
+        rows.append({"path": directory, "kind": "directory", "required": "true", "exists": "true", "size_bytes": "NA", "sha256": "NA"})
     for file_path in MINIMUM_REVIEW_FILES:
         record = file_record(file_path)
         rows.append({
