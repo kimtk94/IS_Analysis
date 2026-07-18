@@ -31,23 +31,28 @@ file. Keep it on Drive and do not delete or replace it while a run is active.
 Do not manually fill archive sizes or hashes. Start with a small target TSV that
 contains `ancestry`, `gene_symbol`, and `source_file` (and `synapse_id` when two
 Synapse files have the same name). In the data-setup environment, build the
-download manifest directly from a Synapse folder's file-handle metadata:
+download manifest directly from the configured UKB-PPP **EUR** (`syn51365303`)
+and **EAS** (`syn51365306`) folders' file-handle metadata. The target TSV
+controls which of those folders are queried:
 
 ```bash
 export SYNAPSE_AUTH_TOKEN='your-personal-access-token'
 python3 scripts/build_ukb_ppp_download_manifest.py \
   --targets data/metadata/ukb_ppp_targets.tsv \
-  --synapse-parent-id syn12345678 \
+  --ukb-ppp-ancestry-folders \
   --output data/metadata/ukb_ppp_download_manifest.tsv
 ```
 
 This records each file's Synapse ID, canonical Synapse URL, byte size, and MD5
 without downloading the archive. For a reproducible or offline review, export
 the folder metadata from Synapse and substitute `--synapse-metadata-file` for
-`--synapse-parent-id`. The script accepts the usual Synapse field names
+`--ukb-ppp-ancestry-folders`. The script accepts the usual Synapse field names
 (`id`, `name`, `dataFileSizeBytes`, `contentMd5`) and writes the runner-ready
-manifest. The folder-query and subsequent downloads require `synapseclient` and
-Synapse authentication; they are setup/runtime operations, not review checks.
+manifest. The builder also contains the provided AFR, CSA, MID, COMBINED, and
+AMR folder mappings for future target manifests, but the EUR/EAS batch runner
+only processes EUR/EAS. The folder-query and subsequent downloads require
+`synapseclient` and Synapse authentication; they are setup/runtime operations,
+not review checks.
 
 First create and review the plan without downloading:
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Build a UKB-PPP download manifest from Synapse file metadata.
 
-The input target TSV identifies each required EUR/EAS archive.  Supply either a
-Synapse metadata export (suitable for review and reproducible manifest builds)
-or a Synapse parent folder, which is queried with ``synapseclient`` in a
-user-run data-setup environment.  Archive bytes are never downloaded by this
-command.
+The input target TSV identifies each required EUR/EAS archive. Supply either a
+Synapse metadata export (suitable for review and reproducible manifest builds),
+a single Synapse parent folder, or the configured UKB-PPP ancestry folders.
+Folder queries use ``synapseclient`` in a user-run data-setup environment.
+Archive bytes are never downloaded by this command.
 """
 from __future__ import annotations
 
@@ -22,6 +22,24 @@ OUTPUT_COLUMNS = [
     "ancestry", "gene_symbol", "source_file", "url", "expected_size_bytes",
     "sha256", "md5", "synapse_id",
 ]
+ANCESTRIES = {
+    "EUR": {"label": "European_discovery", "parent_id": "syn51365303", "aliases": {"EUR", "EUROPEAN", "EUROPEAN_DISCOVERY", "EUROPE"}},
+    "AFR": {"label": "African", "parent_id": "syn51365304", "aliases": {"AFR", "AFRICAN", "AFRICA"}},
+    "CSA": {"label": "Central_South_Asian", "parent_id": "syn51365305", "aliases": {"CSA", "CENTRAL_SOUTH_ASIAN", "CENTRAL-SOUTH-ASIAN", "SOUTH_ASIAN"}},
+    "EAS": {"label": "East_Asian", "parent_id": "syn51365306", "aliases": {"EAS", "EAST_ASIAN", "EAST-ASIAN", "EASTASIAN"}},
+    "MID": {"label": "Middle_East", "parent_id": "syn51365307", "aliases": {"MID", "MIDDLE_EAST", "MIDDLE-EAST", "MIDDLEEAST"}},
+    "COMBINED": {"label": "Combined", "parent_id": "syn51365308", "aliases": {"COMBINED", "ALL", "META"}},
+    "AMR": {"label": "American", "parent_id": "syn51500434", "aliases": {"AMR", "AMERICAN", "AMERICA"}},
+}
+
+
+def canonical_ancestry(value: str) -> str:
+    """Return the configured ancestry code, accepting documented aliases."""
+    normalized = value.upper().strip().replace(" ", "_")
+    for code, details in ANCESTRIES.items():
+        if normalized == code or normalized in details["aliases"]:
+            return code
+    raise ValueError(f"Unsupported ancestry: {value}. Supported codes: {', '.join(ANCESTRIES)}")
 
 
 def read_tsv(path: Path) -> list[dict[str, str]]:
@@ -48,10 +66,15 @@ def normalize_metadata(row: dict[str, str]) -> dict[str, str]:
     size = first_value(row, ("expected_size_bytes", "dataFileSizeBytes", "contentSize", "content_size"))
     md5 = first_value(row, ("md5", "contentMd5", "content_md5"))
     sha256 = first_value(row, ("sha256", "contentSha256", "content_sha256"))
-    return {"synapse_id": synapse_id, "source_file": Path(filename).name, "expected_size_bytes": size, "md5": md5, "sha256": sha256}
+    ancestry = first_value(row, ("ancestry", "ancestry_code"))
+    return {
+        "synapse_id": synapse_id, "source_file": Path(filename).name,
+        "expected_size_bytes": size, "md5": md5, "sha256": sha256,
+        "ancestry": canonical_ancestry(ancestry) if ancestry else "",
+    }
 
 
-def metadata_from_parent(parent_id: str, token: str) -> list[dict[str, str]]:
+def metadata_from_parent(parent_id: str, token: str, ancestry: str = "") -> list[dict[str, str]]:
     """Fetch file-handle metadata only; do not materialize Synapse file bytes."""
     if importlib.util.find_spec("synapseclient") is None:
         raise RuntimeError("synapseclient is required for --synapse-parent-id; install it during the user-run setup phase.")
@@ -69,7 +92,17 @@ def metadata_from_parent(parent_id: str, token: str) -> list[dict[str, str]]:
         rows.append(normalize_metadata({
             "id": child["id"], "name": child["name"], "contentSize": str(handle.get("contentSize", "")),
             "contentMd5": handle.get("contentMd5", ""), "contentSha256": handle.get("contentSha256", ""),
+            "ancestry": ancestry,
         }))
+    return rows
+
+
+def metadata_from_ancestry_folders(targets: list[dict[str, str]], token: str) -> list[dict[str, str]]:
+    """Query only the configured ancestry folders required by the target TSV."""
+    requested = sorted({canonical_ancestry(row["ancestry"]) for row in targets})
+    rows = []
+    for ancestry in requested:
+        rows.extend(metadata_from_parent(ANCESTRIES[ancestry]["parent_id"], token, ancestry))
     return rows
 
 
@@ -83,10 +116,11 @@ def build_manifest(targets: list[dict[str, str]], metadata: list[dict[str, str]]
         by_name.setdefault(row["source_file"], []).append(row)
     output = []
     for target in targets:
-        ancestry = target["ancestry"].upper()
+        ancestry = canonical_ancestry(target["ancestry"])
         gene = target["gene_symbol"].upper()
         name = Path(target["source_file"]).name
         candidates = [by_id[target["synapse_id"]]] if target.get("synapse_id", "") in by_id else by_name.get(name, [])
+        candidates = [item for item in candidates if not item["ancestry"] or item["ancestry"] == ancestry]
         if len(candidates) != 1:
             detail = "not found" if not candidates else "ambiguous; add synapse_id to the target TSV"
             raise ValueError(f"Synapse metadata for {ancestry}/{gene}/{name}: {detail}")
@@ -120,6 +154,7 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--synapse-metadata-file", help="TSV exported from Synapse containing id/name and file-handle metadata.")
     source.add_argument("--synapse-parent-id", help="Synapse folder ID to query for file metadata.")
+    source.add_argument("--ukb-ppp-ancestry-folders", action="store_true", help="Query configured UKB-PPP folders for the ancestries in --targets.")
     parser.add_argument("--output", required=True, help="Output download manifest TSV.")
     parser.add_argument("--synapse-token", default=os.environ.get("SYNAPSE_AUTH_TOKEN", ""), help="Synapse personal access token; defaults to SYNAPSE_AUTH_TOKEN.")
     return parser.parse_args()
@@ -128,7 +163,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     targets = read_tsv(Path(args.targets))
-    raw_metadata = read_tsv(Path(args.synapse_metadata_file)) if args.synapse_metadata_file else metadata_from_parent(args.synapse_parent_id, args.synapse_token)
+    if args.synapse_metadata_file:
+        raw_metadata = read_tsv(Path(args.synapse_metadata_file))
+    elif args.ukb_ppp_ancestry_folders:
+        raw_metadata = metadata_from_ancestry_folders(targets, args.synapse_token)
+    else:
+        raw_metadata = metadata_from_parent(args.synapse_parent_id, args.synapse_token)
     rows = build_manifest(targets, [normalize_metadata(row) for row in raw_metadata])
     write_tsv(Path(args.output), rows)
     fingerprint = hashlib.sha256(Path(args.output).read_bytes()).hexdigest()

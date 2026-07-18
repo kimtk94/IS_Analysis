@@ -64,6 +64,7 @@ with open(sys.argv[1], newline="", encoding="utf-8") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
 assert [row["synapse_id"] for row in rows] == ["syn1001", "syn1002"]
 assert [row["expected_size_bytes"] for row in rows] == ["123456", "234567"]
+assert [row["ancestry"] for row in rows] == ["EUR", "EAS"]
 assert all(row["url"].startswith("https://www.synapse.org/Synapse:syn") for row in rows)
 print("[OK] Synapse metadata manifest fixture")
 PY

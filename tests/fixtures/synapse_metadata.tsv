@@ -1,3 +1,3 @@
-id	name	dataFileSizeBytes	contentMd5
-syn1001	ALPHA_P12345_OID1_v1_PANEL.tar	123456	9e107d9d372bb6826bd81d3542a419d6
-syn1002	ALPHA_P12345_OID1_v1_PANEL_EAS.tar	234567	e4d909c290d0fb1ca068ffaddf22cbd0
+id	name	ancestry	dataFileSizeBytes	contentMd5
+syn1001	ALPHA_P12345_OID1_v1_PANEL.tar	European	123456	9e107d9d372bb6826bd81d3542a419d6
+syn1002	ALPHA_P12345_OID1_v1_PANEL.tar	East Asian	234567	e4d909c290d0fb1ca068ffaddf22cbd0
