@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import os
 import re
 import subprocess
@@ -80,6 +81,17 @@ def load_manifest(path: Path, pd: Any) -> Any:
     return pd.DataFrame()
 
 
+def ensure_pandas() -> Any:
+    if importlib.util.find_spec("pandas") is None:
+        raise SystemExit(
+            "[ERROR] Missing Python dependency: pandas. "
+            "Run `bash scripts/setup_codex_env.sh` or `python -m pip install -r requirements.txt`."
+        )
+    import pandas
+
+    return pandas
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and optionally run UKB-PPP paired EUR/EAS exposure batches.")
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets")
@@ -104,7 +116,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    import pandas as pd
+    pd = ensure_pandas()
 
     base = Path(args.base)
     outdir = Path(args.outdir)

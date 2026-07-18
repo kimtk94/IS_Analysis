@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import tarfile
@@ -50,13 +51,13 @@ SOURCE_COLUMNS = ["source_file", "source_file_name", "file_name", "archive"]
 
 
 def ensure_pandas() -> Any:
-    try:
-        import pandas
-    except ModuleNotFoundError as exc:
+    if importlib.util.find_spec("pandas") is None:
         raise SystemExit(
             "[ERROR] Missing Python dependency: pandas. "
             "Run `bash scripts/setup_codex_env.sh` or `python -m pip install -r requirements.txt`."
-        ) from exc
+        )
+    import pandas
+
     return pandas
 
 
