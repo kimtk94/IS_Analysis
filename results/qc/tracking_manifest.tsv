@@ -1,13 +1,16 @@
 path	kind	required	exists	size_bytes	sha256
-scripts	directory	true			
-R	directory	true			
-config	directory	true			
-results/qc	directory	true			
-Backup	directory	true			
-scripts/Backup	directory	true			
+scripts	directory	true	true	NA	NA
+R	directory	true	true	NA	NA
+config	directory	true	true	NA	NA
+results/qc	directory	true	true	NA	NA
+Backup	directory	true	true	NA	NA
+scripts/Backup	directory	true	true	NA	NA
 scripts/00_run_full_audit.py	file	true	true	682	69dd18e50192b70565720861bf2146daea197320ea917450840990bc4895ff29
-scripts/audit_common.py	file	true	true	2052	77330a940cbe30cb9c60bc9450b41e5cc2f92fea50ba0a1e42e3295166711589
-scripts/01_build_expected_manifest.py	file	true	true	997	5934f2559f6ce5acbe0cbac86c9b8240a53a6fd1a47cc2004855f2fe66a59741
+scripts/audit_common.py	file	true	true	2210	49ad08a4e74cffd6bffac147650ec52164a86a458bdf93a4318d154d14391123
+scripts/01_build_expected_manifest.py	file	true	true	1051	839665b8fc17649fdcce73884d03dd83bd64a3fd752d9597fa944210df51c6e8
 scripts/02_audit_raw_downloads.py	file	true	true	1542	1261027a97d8bb3bf0c0184a24e3210e0a36b1f55ae9c1c132e5612a03e98b8e
-scripts/01_prepare_exposure_fast.R	file	true	true	272	30f08b9566ba2b2d62ba045ab6297f7f87513eeefcddb164eb9a5635486d488a
+scripts/01_prepare_exposure_fast.R	file	true	true	18042	e3e4f695ad8da5972fc3c8f17b377d0887f4b50a982f2ebd2ecb479f69e003f4
+scripts/patch_empty_exposure_outputs.py	file	true	true	2578	ed2039e4cd0464d05d5a7dc9fd1421a7ecc06e6e14af25f76d9109a9ea197cb8
+scripts/patch_empty_output_current.py	file	true	true	2605	a23a19f279c71476f46f7eea976258d5b9d2599b422b59a579524ffbb95b0151
+scripts/patch_runner_output_exists.py	file	true	true	990	2277e2d847d3876715b574d1a1b025ac469e5755b51cd6d63f2f9bccc36e857e
 scripts/Backup/01_prepare_exposure.R	file	true	true	161	e588d000243e50b71e66ea4a030febba9c5a7ee970812ace16082e0b3ccfc37d
