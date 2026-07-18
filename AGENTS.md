@@ -6,7 +6,7 @@
 - Do not install packages during the agent/review phase.
 - Run `bash scripts/codex_smoke_test.sh` for the committed fixture smoke test.
 - If dependencies are missing, report `ENVIRONMENT_NOT_READY`; do not retry pip or apt installation.
-- Use only the committed fixtures under `tests/fixtures` for review-time validation.
+- Use only the committed fixtures under `tests/fixtures` for review-time validation; runtime tar files may be materialized under `/tmp` or another local `SMOKE_ROOT`.
 - Do not download or inspect full raw pQTL data during PR review.
 
 ## Setup phase

@@ -26,4 +26,20 @@ After the setup phase has prepared dependencies, review-time validation should r
 bash scripts/codex_smoke_test.sh
 ```
 
-This smoke test intentionally does not install packages or access external data. It checks the already-prepared Python/R dependencies, materializes tiny tar archives under `/tmp` from committed TSV fixture content, and runs `scripts/00_run_full_audit_final.py` against the synthetic fixture config under `tests/fixtures`.
+This smoke test intentionally does not install packages or access external data. It checks the already-prepared Python/R dependencies, materializes tiny tar archives under `${SMOKE_ROOT:-/tmp/is_analysis_smoke_fixture}` from committed TSV fixture content, writes a runtime fixture config there, and runs `scripts/00_run_full_audit_final.py` against that runtime config.
+
+## Google Colab layout
+
+For Colab validation, keep the real project and full data on Drive at `/content/drive/MyDrive/IS_Analysis_V2`, but keep smoke-test scratch data on the Colab VM local filesystem:
+
+```bash
+from google.colab import drive
+drive.mount('/content/drive')
+%cd /content/drive/MyDrive/IS_Analysis_V2
+
+bash scripts/setup_codex_env.sh
+bash scripts/colab_smoke_test.sh
+python scripts/00_run_full_audit_final.py --config config/audit_config_colab_drive.json
+```
+
+`config/audit_config_colab_drive.json` points `project_root` at `/content/drive/MyDrive/IS_Analysis_V2` for real manifests/raw data/results. `scripts/colab_smoke_test.sh` sets `SMOKE_ROOT=/content/is_analysis_smoke_fixture`, so synthetic tar files and fixture audit outputs are created outside Drive and can be discarded after the smoke test.
