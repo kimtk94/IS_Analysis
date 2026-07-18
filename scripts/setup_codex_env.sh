@@ -3,6 +3,7 @@
 #
 # This script covers the dependencies that blocked local validation in Codex:
 #   - pandas for the Python batch/audit runners
+#   - openpyxl for final audit Excel output
 #   - Rscript plus the data.table package for scripts/01_prepare_exposure_fast.R
 #
 # Usage from the repository root:
@@ -28,30 +29,51 @@ if [[ ! -f "${REQUIREMENTS_FILE}" ]]; then
   exit 1
 fi
 
-echo "[INFO] Installing Python requirements from ${REQUIREMENTS_FILE}"
-"${PYTHON_BIN}" -m pip install --root-user-action="${PIP_ROOT_USER_ACTION}" --index-url "${PIP_INDEX_URL}" --no-cache-dir --upgrade pip
-"${PYTHON_BIN}" -m pip install --root-user-action="${PIP_ROOT_USER_ACTION}" --index-url "${PIP_INDEX_URL}" --no-cache-dir -r "${REQUIREMENTS_FILE}"
+python_deps_available() {
+  "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1
+import pandas
+import openpyxl
+PY
+}
 
-if ! command -v Rscript >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    echo "[INFO] Rscript not found; installing r-base-core with apt-get"
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends r-base-core r-cran-data.table
+r_deps_available() {
+  command -v Rscript >/dev/null 2>&1 && \
+    Rscript -e 'if (!requireNamespace("data.table", quietly = TRUE)) quit(status = 1)' >/dev/null 2>&1
+}
+
+if python_deps_available && r_deps_available; then
+  echo "[OK] Dependencies already available; skipping installation"
+else
+  echo "[SETUP] Installing dependencies"
+  if ! python_deps_available; then
+    echo "[INFO] Installing Python requirements from ${REQUIREMENTS_FILE}"
+    "${PYTHON_BIN}" -m pip install --root-user-action="${PIP_ROOT_USER_ACTION}" --index-url "${PIP_INDEX_URL}" --no-cache-dir --upgrade pip
+    "${PYTHON_BIN}" -m pip install --root-user-action="${PIP_ROOT_USER_ACTION}" --index-url "${PIP_INDEX_URL}" --no-cache-dir -r "${REQUIREMENTS_FILE}"
   else
-    echo "[ERROR] Rscript is not installed and apt-get is unavailable." >&2
-    echo "[ERROR] Install R manually, then re-run this script to install R packages." >&2
-    exit 1
+    echo "[OK] Python dependencies already available"
   fi
-else
-  echo "[INFO] Rscript found: $(command -v Rscript)"
-fi
 
-if ! Rscript -e 'if (!requireNamespace("data.table", quietly = TRUE)) quit(status = 1)' >/dev/null 2>&1; then
-  echo "[INFO] Installing R package: data.table"
-  Rscript -e "install.packages('data.table', repos='${CRAN_REPO}')"
-else
-  echo "[INFO] R package available: data.table"
+  if ! command -v Rscript >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      echo "[INFO] Rscript not found; installing r-base-core with apt-get"
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends r-base-core r-cran-data.table
+    else
+      echo "[ERROR] Rscript is not installed and apt-get is unavailable." >&2
+      echo "[ERROR] Install R manually, then re-run this script to install R packages." >&2
+      exit 1
+    fi
+  else
+    echo "[INFO] Rscript found: $(command -v Rscript)"
+  fi
+
+  if ! Rscript -e 'if (!requireNamespace("data.table", quietly = TRUE)) quit(status = 1)' >/dev/null 2>&1; then
+    echo "[INFO] Installing R package: data.table"
+    Rscript -e "install.packages('data.table', repos='${CRAN_REPO}')"
+  else
+    echo "[OK] R package already available: data.table"
+  fi
 fi
 
 echo "[INFO] Verifying required executables and packages"

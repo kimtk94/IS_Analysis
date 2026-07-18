@@ -17,3 +17,13 @@ The setup script installs Python dependencies from `requirements.txt`, ensures `
 ## Final legacy audit configuration
 
 The self-contained final audit entrypoint is `scripts/00_run_full_audit_final.py`. The committed `config/audit_config.json` uses `"project_root": "."` so it resolves paths from the repository root in Codex/GitHub containers. If running from a Google Drive checkout, first `cd` to that project directory or pass `--config /path/to/audit_config.json` with paths adjusted for that copy. The audit writes evidence files only and does not execute MR or mutate raw data.
+
+## Codex/PR smoke test
+
+After the setup phase has prepared dependencies, review-time validation should run:
+
+```bash
+bash scripts/codex_smoke_test.sh
+```
+
+This smoke test intentionally does not install packages or access external data. It checks the already-prepared Python/R dependencies, materializes tiny tar archives under `/tmp` from committed TSV fixture content, and runs `scripts/00_run_full_audit_final.py` against the synthetic fixture config under `tests/fixtures`.
