@@ -2,9 +2,11 @@
 """Build and optionally run UKB-PPP paired EUR/EAS exposure batches.
 
 The runner scans ancestry-aware rawdata folders, writes the current EUR/EAS
-complete-pair gene list, creates fixed-size gene batch files, maintains an
+complete-pair gene list, creates fixed-size 10-gene batch files, maintains an
 atomic batch manifest, and can invoke the R exposure preparation script batch by
-batch. It is intended for legacy recovery/Colab workflows; v2 work should move
+batch. The --test mode limits the run to the first 10 alphabetically sorted
+EUR/EAS paired genes and passes a 200-line-per-file cap to the R reader.
+It is intended for legacy recovery/Colab workflows; v2 work should move
 this behavior behind explicit pipeline stages and output contracts.
 """
 from __future__ import annotations
@@ -82,9 +84,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and optionally run UKB-PPP paired EUR/EAS exposure batches.")
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets")
     parser.add_argument("--outdir", default="results/qc/pair_priority")
-    parser.add_argument("--batch-dir", default="results/qc/pair_priority/gene_batches_4")
+    parser.add_argument("--batch-dir", default="results/qc/pair_priority/gene_batches_10")
     parser.add_argument("--manifest", default="results/qc/pair_priority/ukb_ppp_pair_batch_manifest.tsv")
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=10, help="Number of paired genes per batch; defaults to 10.")
+    parser.add_argument("--test", action="store_true", help="Limit to the first 10 alphabetically sorted EUR/EAS paired genes and read only 200 lines per raw file.")
+    parser.add_argument("--test-max-lines", type=int, default=200, help="Raw summary-stat lines to read per file in --test mode, including the header line.")
     parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
     parser.add_argument("--exposure-outdir", default="results/exposure_batches")
     parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
@@ -121,16 +125,34 @@ def main() -> None:
     genes_by = valid.groupby("ancestry")["gene_symbol"].apply(lambda values: set(values.dropna().astype(str))).to_dict() if not valid.empty else {}
     eur = genes_by.get("EUR", set())
     eas = genes_by.get("EAS", set())
-    paired_genes = sorted(eur & eas)
+    paired_genes_all = sorted(eur & eas)
+    if not paired_genes_all:
+        raise SystemExit("[ERROR] No valid EUR/EAS paired genes found after raw file validity scan")
 
-    (outdir / "ukb_ppp_complete_pair_genes.current.txt").write_text("\n".join(paired_genes) + "\n", encoding="utf-8")
-    n_batches = (len(paired_genes) + args.batch_size - 1) // args.batch_size
+    if args.test:
+        if len(paired_genes_all) < 10:
+            raise SystemExit(f"[ERROR] --test requires at least 10 EUR/EAS paired genes; found {len(paired_genes_all)}")
+        paired_genes = paired_genes_all[:10]
+        effective_batch_size = 10
+        mode = "test"
+    else:
+        paired_genes = paired_genes_all
+        effective_batch_size = args.batch_size
+        mode = "full"
+
+    (outdir / "ukb_ppp_complete_pair_genes.current.txt").write_text("\n".join(paired_genes_all) + "\n", encoding="utf-8")
+    if args.test:
+        (outdir / "ukb_ppp_test_10genes.current.txt").write_text("\n".join(paired_genes) + "\n", encoding="utf-8")
+    n_batches = (len(paired_genes) + effective_batch_size - 1) // effective_batch_size
     summary = pd.DataFrame([{
         "timestamp": now(),
         "valid_EUR_genes": len(eur),
         "valid_EAS_genes": len(eas),
-        "complete_pair_genes": len(paired_genes),
-        "batch_size": args.batch_size,
+        "complete_pair_genes": len(paired_genes_all),
+        "selected_genes": len(paired_genes),
+        "mode": mode,
+        "test_max_lines_including_header": args.test_max_lines if args.test else "",
+        "batch_size": effective_batch_size,
         "n_batches": n_batches,
     }])
     summary.to_csv(outdir / "ukb_ppp_pair_batch_summary.tsv", sep="\t", index=False)
@@ -140,9 +162,9 @@ def main() -> None:
     old_map = {str(row.batch_id): row for _, row in old.iterrows()} if not old.empty and "batch_id" in old.columns else {}
 
     rows = []
-    for offset in range(0, len(paired_genes), args.batch_size):
-        genes = paired_genes[offset : offset + args.batch_size]
-        batch_id = f"batch_{offset // args.batch_size + 1:03d}"
+    for offset in range(0, len(paired_genes), effective_batch_size):
+        genes = paired_genes[offset : offset + effective_batch_size]
+        batch_id = f"batch_{offset // effective_batch_size + 1:03d}"
         batch_file = batch_dir / batch_fname(batch_id, genes)
         expected_output = exposure_outdir / f"exposure_{batch_id}.tsv"
         log_file = exposure_outdir / "logs" / f"{batch_id}.runner.log"
@@ -178,6 +200,8 @@ def main() -> None:
             "returncode": returncode,
             "log_file": str(log_file),
             "message": message,
+            "mode": mode,
+            "test_max_lines_including_header": args.test_max_lines if args.test else "",
         })
 
     manifest = pd.DataFrame(rows)
@@ -218,8 +242,11 @@ def main() -> None:
             "--rawdir", str(base),
             "--tmpdir", args.tmpdir,
             "--p-threshold", str(args.p_threshold),
+            "--ancestries", "EUR,EAS",
         ]
-        if not args.no_eur_first:
+        if args.test:
+            cmd.extend(["--test", "--max-file-lines", str(args.test_max_lines)])
+        if not args.test and not args.no_eur_first:
             cmd.append("--eur-first")
         if not args.no_copy_to_local:
             cmd.append("--copy-to-local")

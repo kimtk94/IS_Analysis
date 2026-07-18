@@ -424,7 +424,7 @@ MR 보고는 STROBE-MR 항목을 반영한다. 참고: <https://pubmed.ncbi.nlm.
 
 ```json
 {
-  "run_id": "20260718_eur_eas_10gene_head100",
+  "run_id": "20260718_eur_eas_10gene_head200",
   "stage": "02_standardize_exposure",
   "unit": "ABO__EUR__OID30675",
   "status": "SUCCESS_NONEMPTY",
@@ -461,7 +461,7 @@ MR 보고는 STROBE-MR 항목을 반영한다. 참고: <https://pubmed.ncbi.nlm.
 - 실패 unit만 다시 실행할 수 있어야 한다.
 - partial output은 최종 경로에 두지 않는다.
 
-## 11. 첫 번째 smoke test: 10개 유전자 × EUR/EAS × 최대 100행
+## 11. 첫 번째 smoke test: 10개 유전자 × EUR/EAS × 최대 200줄
 
 테스트 목록은 `ukb_ppp_complete_pair_genes.current.txt`에서 EUR/EAS complete pair로 기록된 유전자를 정렬 순서대로 선택한다. 선택 편향을 막기 위해 목록과 순서를 config에 고정한다.
 
@@ -483,12 +483,12 @@ MR 보고는 STROBE-MR 항목을 반영한다. 참고: <https://pubmed.ncbi.nlm.
 - ancestry: `EUR`, `EAS`
 - 단위: `(gene_symbol, ancestry)` 20개
 - source: 각 유전자에서 EUR/EAS에 공통으로 존재하는 동일 assay/source pair 1개
-- 행 제한: 각 단위에서 header와 comment를 제외한 data row 최대 100행
-- 전체 최대 data row: 2,000행
+- 행 제한: 각 단위에서 header 포함 파일 라인 최대 200줄
+- 전체 최대 파일 라인: 4,000줄
 - sampling: 원천 파일 순서를 유지하는 deterministic head 방식
-- 저장: header + 최대 100행만 압축 저장하고 full raw archive는 Drive에 새로 보존하지 않는다.
+- 저장: header 포함 최대 200줄만 압축 저장하고 full raw archive는 Drive에 새로 보존하지 않는다.
 
-압축 tar에서는 원격 파일을 행 단위로 직접 요청할 수 없는 경우가 있다. 이때 archive member를 스트리밍으로 읽되 100번째 data row에서 reader를 중단하고, 전체 archive를 영구 저장하지 않는다. 다운로드 byte 수와 실제 추출 row 수를 checkpoint에 각각 기록한다.
+압축 tar에서는 원격 파일을 행 단위로 직접 요청할 수 없는 경우가 있다. 이때 archive member를 스트리밍으로 읽되 200번째 파일 라인에서 reader를 중단하고, 전체 archive를 영구 저장하지 않는다. 다운로드 byte 수와 실제 추출 row 수를 checkpoint에 각각 기록한다.
 
 실행 config는 `IS_ANALYSIS_TEST_SPEC_10GENES.yaml`을 사용한다.
 
@@ -498,7 +498,7 @@ MR 보고는 STROBE-MR 항목을 반영한다. 참고: <https://pubmed.ncbi.nlm.
 2. 각 gene×ancestry에 source가 정확히 1개 선택됐는지 검증한다.
 3. ancestry-aware raw 경로, 크기, archive member를 기록한다.
 4. member를 스트리밍하고 header/comment를 분리한다.
-5. data row 100개에서 읽기를 중단한다.
+5. 헤더를 포함해 200번째 파일 라인에서 읽기를 중단한다.
 6. canonical schema로 변환하고 원천 순서를 보존한다.
 7. unit별 checkpoint와 전체 test summary를 기록한다.
 8. 같은 config로 재실행하여 hash와 row 결과가 동일한지 확인한다.
@@ -506,16 +506,16 @@ MR 보고는 STROBE-MR 항목을 반영한다. 참고: <https://pubmed.ncbi.nlm.
 smoke acceptance criteria:
 
 - 10개 유전자 모두 EUR와 EAS가 있어 정확히 20개 unit가 생성된다.
-- 각 unit의 `0 < extracted_data_rows <= 100`이다.
-- header와 comment는 100행 제한에 포함하지 않는다.
+- 각 unit의 `0 < extracted_lines_including_header <= 200`이다.
+- header는 200줄 제한에 포함한다.
 - p-value가 `(0, 1]` 범위다.
 - allele은 A/C/G/T이고 effect/other가 다르다.
 - ancestry, build, chromosome/position, source identity가 명시된다.
 - source별 출력과 checkpoint hash가 생성된다.
 - 두 번 실행한 출력 hash가 동일하다.
-- full archive 또는 100행 초과 결과가 test output에 남지 않는다.
+- full archive 또는 200줄 초과 결과가 test output에 남지 않는다.
 
-이 제한행 smoke test의 성공은 다운로드, archive reader, parser, ancestry routing, canonical schema, checkpoint 및 재시작 동작만 보장한다. 100행 표본은 cis coverage나 유효 instrument를 보장하지 않으므로 MR, sensitivity analysis, coloc의 과학적 PASS 근거로 사용하지 않는다. 과학 분석 gate는 full-data 검증 단계에서 별도로 통과해야 한다.
+이 제한행 smoke test의 성공은 다운로드, archive reader, parser, ancestry routing, canonical schema, checkpoint 및 재시작 동작만 보장한다. 200줄 표본은 cis coverage나 유효 instrument를 보장하지 않으므로 MR, sensitivity analysis, coloc의 과학적 PASS 근거로 사용하지 않는다. 과학 분석 gate는 full-data 검증 단계에서 별도로 통과해야 한다.
 
 ## 12. Codex 작업 규칙
 
@@ -524,11 +524,11 @@ Codex는 아래 순서를 지킨다.
 1. 이 문서, `AGENTS.md`, config를 먼저 읽는다.
 2. GitHub와 Drive의 대상 경로를 확정한다.
 3. 기존 `IS_Analysis`는 수정하거나 삭제하지 않는다.
-4. 대용량 raw는 metadata만 확인한다. TEST 실행은 config에 고정된 10개 유전자, EUR/EAS, 단위별 최대 100 data row로 제한한다.
+4. 대용량 raw는 metadata만 확인한다. TEST 실행은 config에 고정된 10개 유전자, EUR/EAS, 단위별 헤더 포함 최대 200줄로 제한한다.
 5. 모든 small code/config/backup을 비교해 기능과 차이를 기록한다.
 6. backup의 기능을 채택할 때는 테스트로 검증한다.
 7. schema contract와 gate를 먼저 구현한다.
-8. 10-gene EUR/EAS head-100 smoke test를 실행한다.
+8. 10-gene EUR/EAS head-200 smoke test를 실행한다.
 9. 실패하면 다음 단계로 진행하지 않고 원인과 재현 명령을 남긴다.
 10. 제한행 smoke test 통과 후 full-data 과학 gate를 별도로 검증하고, 그 뒤에만 15개 후보 또는 전체 batch 확장을 제안한다.
 
@@ -536,7 +536,7 @@ Codex는 아래 순서를 지킨다.
 
 - 50 MB 초과 파일은 자동 본문 검토에서 제외한다.
 - `.tar`, `.gz`, `.bgz`, `.bgen`, `.bed`, `.vcf.gz`는 raw로 간주한다.
-- 단, test config가 선택한 20개 gene×ancestry source는 스트리밍 head-100 추출에 한해 예외다.
+- 단, test config가 선택한 20개 gene×ancestry source는 스트리밍 head-200 추출에 한해 예외다.
 
 금지 사항:
 
@@ -557,7 +557,7 @@ Codex는 아래 순서를 지킨다.
 - canonical schema
 - ancestry-aware inventory/raw QC
 - checkpoint contract
-- 10-gene EUR/EAS head-100 tar adapter smoke test
+- 10-gene EUR/EAS head-200 tar adapter smoke test
 
 ### Milestone 2 — 분석 입력 완성
 
@@ -586,7 +586,7 @@ Codex는 아래 순서를 지킨다.
 
 `IS_Analysis_v2`는 다음 조건을 모두 만족할 때만 전체 실행 준비 완료로 본다.
 
-- 10-gene EUR/EAS head-100 smoke test의 20개 unit 전체 통과
+- 10-gene EUR/EAS head-200 smoke test의 20개 unit 전체 통과
 - full-data 과학 gate와 제한행 smoke 결과의 명확한 분리
 - schema와 build mismatch 테스트 통과
 - header-only false-success regression test 통과
