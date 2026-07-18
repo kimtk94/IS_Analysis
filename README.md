@@ -19,7 +19,10 @@ EAS	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eas.tar
 `ancestry`, `gene_symbol`, `source_file`, and `url` are required. `expected_size_bytes`
 and `sha256` are optional but strongly recommended when the source provides them.
 Every selected gene must have at least one EUR and one EAS row; genes without a
-pair are intentionally excluded.
+pair are intentionally excluded. This TSV is also the **raw-data lifecycle
+manifest**: when cleanup is enabled, the runner writes `pipeline_batch_id`,
+`raw_lifecycle`, `raw_cleanup_at`, and `raw_cleanup_reason` back into this same
+file. Keep it on Drive and do not delete or replace it while a run is active.
 
 First create and review the plan without downloading:
 
@@ -44,6 +47,7 @@ To safely resume a single failed batch, use `--only-batch batch_003`. To only
 download and validate archives, add `--download-only` with `--run`.
 
 `--delete-raw-after-processing` is the production disk-space cleanup step. It
+requires `--download-manifest`; raw-only discovery mode cannot delete files.
 deletes an archive only after both ancestry batch outputs exist and the R
 per-source status records that archive as successfully processed (including a
 valid empty result after filtering). If an R run, output, or source status is

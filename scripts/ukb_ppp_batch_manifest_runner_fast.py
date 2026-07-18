@@ -94,6 +94,21 @@ def read_download_manifest(path: Path, pd: Any) -> Any:
     return manifest
 
 
+def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
+    """Persist the raw lifecycle state in the source manifest before continuing."""
+    for column in ("pipeline_batch_id", "raw_lifecycle", "raw_cleanup_at", "raw_cleanup_reason"):
+        if column not in manifest.columns:
+            manifest[column] = ""
+    for row in cleanup_rows:
+        source_file = Path(row["raw_file"]).name
+        mask = (manifest["ancestry"] == row["ancestry"]) & (manifest["source_file"] == source_file)
+        lifecycle = "deleted_after_processed" if row["action"] == "deleted" else "retained_after_processing"
+        manifest.loc[mask, "pipeline_batch_id"] = batch_id
+        manifest.loc[mask, "raw_lifecycle"] = lifecycle
+        manifest.loc[mask, "raw_cleanup_at"] = now()
+        manifest.loc[mask, "raw_cleanup_reason"] = row["reason"]
+
+
 def paired_genes_from_manifest(manifest: Any) -> list[str]:
     groups = manifest.groupby("gene_symbol")["ancestry"].agg(lambda values: set(values))
     return sorted(gene for gene, ancestries in groups.items() if set(ANCESTRIES).issubset(ancestries))
@@ -208,6 +223,8 @@ def main() -> None:
     args = parse_args()
     if args.batch_size < 1:
         raise SystemExit("[ERROR] --batch-size must be positive")
+    if args.delete_raw_after_processing and not args.download_manifest:
+        raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
     manifest_path = qc_dir / "batch_manifest.tsv"
@@ -306,6 +323,8 @@ def main() -> None:
                     cleanup_rows.append({"batch_id": batch_id, "ancestry": ancestry, **row})
             cleanup_path = qc_dir / "raw_cleanup" / f"{batch_id}.tsv"
             write_atomic(pd.DataFrame(cleanup_rows), cleanup_path)
+            record_raw_cleanup_in_manifest(download_manifest, cleanup_rows, batch_id)
+            write_atomic(download_manifest, Path(args.download_manifest))
             cleanup_failed = any(row["action"] != "deleted" for row in cleanup_rows)
             batch_df.loc[index, "status"] = "completed_raw_retained" if cleanup_failed else "completed_raw_deleted"
             batch_df.loc[index, "raw_cleanup"] = str(cleanup_path)
