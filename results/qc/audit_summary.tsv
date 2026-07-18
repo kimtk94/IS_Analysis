@@ -6,10 +6,16 @@ required_directory	results/qc	pass	directory present
 required_directory	Backup	pass	directory present
 required_directory	scripts/Backup	pass	directory present
 minimum_review_file	scripts/00_run_full_audit.py	pass	682 bytes
-minimum_review_file	scripts/audit_common.py	pass	2073 bytes
+minimum_review_file	scripts/00_run_full_audit_final.py	pass	29248 bytes
+minimum_review_file	scripts/audit_common.py	pass	2310 bytes
 minimum_review_file	scripts/01_build_expected_manifest.py	pass	1051 bytes
 minimum_review_file	scripts/02_audit_raw_downloads.py	pass	1542 bytes
-minimum_review_file	scripts/01_prepare_exposure_fast.R	pass	18042 bytes
+minimum_review_file	scripts/01_prepare_exposure_fast.R	pass	18522 bytes
+minimum_review_file	scripts/setup_codex_env.sh	pass	2187 bytes
+minimum_review_file	requirements.txt	pass	32 bytes
+minimum_review_file	scripts/patch_empty_exposure_outputs.py	pass	2578 bytes
+minimum_review_file	scripts/patch_empty_output_current.py	pass	2605 bytes
+minimum_review_file	scripts/patch_runner_output_exists.py	pass	990 bytes
 minimum_review_file	scripts/Backup/01_prepare_exposure.R	pass	161 bytes
 qc_tsv_family	*current*manifest*.tsv	pass	results/qc/expected_current_manifest.tsv
 qc_tsv_family	*audit*summary*.tsv	pass	results/qc/audit_summary.tsv
