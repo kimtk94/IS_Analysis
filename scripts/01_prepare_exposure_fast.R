@@ -11,6 +11,7 @@ gene_file <- get_arg("--gene-file")
 source_file_list <- get_arg("--source-file-list")
 batch_id  <- get_arg("--batch-id", "batch_001")
 outdir    <- get_arg("--outdir", "results/exposure_batches")
+batch_output <- get_arg("--batch-output")
 rawdir    <- get_arg("--rawdir", "data/rawdata/pqtl/selected_targets")
 tmp_root  <- get_arg("--tmpdir", "/content/ukbppp_tmp")
 ancestries <- trimws(unlist(strsplit(get_arg("--ancestries", "EUR,EAS"), ",")))
@@ -38,7 +39,8 @@ log_dir <- file.path(outdir, "logs")
 dir.create(per_gene_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
 
-batch_out <- file.path(outdir, paste0("exposure_", batch_id, ".tsv"))
+batch_out <- if (is.null(batch_output)) file.path(outdir, paste0("exposure_", batch_id, ".tsv")) else batch_output
+dir.create(dirname(batch_out), recursive = TRUE, showWarnings = FALSE)
 gene_status_out <- file.path(log_dir, paste0(batch_id, "_gene_status.tsv"))
 
 msg <- function(...) message(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " ", paste0(..., collapse = ""))

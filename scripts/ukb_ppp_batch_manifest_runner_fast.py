@@ -1,37 +1,46 @@
 #!/usr/bin/env python3
-"""Build and optionally run UKB-PPP paired EUR/EAS exposure batches.
+"""Run restartable UKB-PPP exposure batches from real EUR/EAS source archives.
 
-The runner scans ancestry-aware rawdata folders, writes the current EUR/EAS
-complete-pair gene list, creates fixed-size 10-gene batch files, maintains an
-atomic batch manifest, and can invoke the R exposure preparation script batch by
-batch. The --test mode limits the run to the first 10 alphabetically sorted
-EUR/EAS paired genes and passes a 200-line-per-file cap to the R reader.
-It is intended for legacy recovery/Colab workflows; v2 work should move
-this behavior behind explicit pipeline stages and output contracts.
+Each batch contains paired EUR/EAS data for a fixed number of genes (10 by
+default).  With ``--download-manifest``, the runner downloads only the source
+archives needed for the current batch, validates them, runs the exposure filter
+once per ancestry, and records all download and processing evidence.  The
+canonical outputs are kept separate by ancestry; no EUR/EAS rows are mixed in a
+batch result.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
-from datetime import datetime
+import tarfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+ANCESTRIES = ("EUR", "EAS")
+REQUIRED_DOWNLOAD_COLUMNS = {"ancestry", "gene_symbol", "source_file", "url"}
+
 
 def now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def shash(value: str, n: int = 8) -> str:
-    return hashlib.md5(value.encode()).hexdigest()[:n]
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def safe_gene(gene: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", gene)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def write_atomic(df: Any, path: Path) -> None:
@@ -41,266 +50,292 @@ def write_atomic(df: Any, path: Path) -> None:
     os.replace(tmp, path)
 
 
+def ensure_pandas() -> Any:
+    if importlib.util.find_spec("pandas") is None:
+        raise SystemExit("[ERROR] Missing Python dependency: pandas.")
+    import pandas
+    return pandas
+
+
 def scan_valid(base: Path, pd: Any) -> Any:
     rows = []
-    for ancestry in ["EUR", "EAS"]:
+    for ancestry in ANCESTRIES:
         folder = base / ancestry
         if not folder.exists():
             continue
         for path in sorted(folder.iterdir(), key=lambda item: item.name):
             if not path.is_file():
                 continue
-            name = path.name
-            size = path.stat().st_size
-            is_temp = ".synapse_download_" in name
-            is_tar = name.endswith(".tar")
-            gene = name.split("_")[0].upper() if "_" in name else ""
             rows.append({
                 "ancestry": ancestry,
-                "gene_symbol": gene,
-                "file_name": name,
+                "gene_symbol": path.name.split("_")[0].upper() if "_" in path.name else "",
+                "source_file": path.name,
                 "file_path": str(path),
-                "size_bytes": size,
-                "is_valid_tar": bool(is_tar and not is_temp and size > 0),
-                "is_temp_synapse": is_temp,
+                "size_bytes": path.stat().st_size,
+                "valid_tar": path.suffix == ".tar" and path.stat().st_size > 0 and ".part" not in path.name,
             })
     return pd.DataFrame(rows)
 
 
-def batch_fname(batch_id: str, genes: list[str], max_len: int = 180) -> str:
-    label = "_".join(safe_gene(gene) for gene in genes)
-    filename = f"{batch_id}_{label}.txt"
-    if len(filename) > max_len:
-        filename = f"{batch_id}_{genes[0]}_to_{genes[-1]}_{shash(label)}.txt"
-    return filename
+def read_download_manifest(path: Path, pd: Any) -> Any:
+    manifest = pd.read_csv(path, sep="\t", dtype=str).fillna("")
+    missing = REQUIRED_DOWNLOAD_COLUMNS - set(manifest.columns)
+    if missing:
+        raise SystemExit(f"[ERROR] Download manifest is missing columns: {', '.join(sorted(missing))}")
+    manifest = manifest.copy()
+    manifest["ancestry"] = manifest["ancestry"].str.upper().str.strip()
+    manifest["gene_symbol"] = manifest["gene_symbol"].str.upper().str.strip()
+    manifest["source_file"] = manifest["source_file"].map(lambda value: Path(value).name)
+    manifest = manifest[manifest["ancestry"].isin(ANCESTRIES) & (manifest["gene_symbol"] != "")].copy()
+    if manifest.empty:
+        raise SystemExit("[ERROR] Download manifest has no EUR/EAS source rows")
+    if manifest.duplicated(["ancestry", "gene_symbol", "source_file"]).any():
+        raise SystemExit("[ERROR] Download manifest has duplicate ancestry/gene/source_file rows")
+    return manifest
 
 
-def load_manifest(path: Path, pd: Any) -> Any:
-    if path.exists() and path.stat().st_size > 0:
-        return pd.read_csv(path, sep="\t")
-    return pd.DataFrame()
+def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
+    """Persist the raw lifecycle state in the source manifest before continuing."""
+    for column in ("pipeline_batch_id", "raw_lifecycle", "raw_cleanup_at", "raw_cleanup_reason"):
+        if column not in manifest.columns:
+            manifest[column] = ""
+    for row in cleanup_rows:
+        source_file = Path(row["raw_file"]).name
+        mask = (manifest["ancestry"] == row["ancestry"]) & (manifest["source_file"] == source_file)
+        lifecycle = "deleted_after_processed" if row["action"] == "deleted" else "retained_after_processing"
+        manifest.loc[mask, "pipeline_batch_id"] = batch_id
+        manifest.loc[mask, "raw_lifecycle"] = lifecycle
+        manifest.loc[mask, "raw_cleanup_at"] = now()
+        manifest.loc[mask, "raw_cleanup_reason"] = row["reason"]
 
 
-def ensure_pandas() -> Any:
-    if importlib.util.find_spec("pandas") is None:
-        raise SystemExit(
-            "[ERROR] Missing Python dependency: pandas. "
-            "Run `bash scripts/setup_codex_env.sh` or `python -m pip install -r requirements.txt`."
-        )
-    import pandas
+def paired_genes_from_manifest(manifest: Any) -> list[str]:
+    groups = manifest.groupby("gene_symbol")["ancestry"].agg(lambda values: set(values))
+    return sorted(gene for gene, ancestries in groups.items() if set(ANCESTRIES).issubset(ancestries))
 
-    return pandas
+
+def paired_genes_from_raw(audit: Any) -> list[str]:
+    if audit.empty:
+        return []
+    valid = audit[audit["valid_tar"]]
+    groups = valid.groupby("gene_symbol")["ancestry"].agg(lambda values: set(values))
+    return sorted(gene for gene, ancestries in groups.items() if set(ANCESTRIES).issubset(ancestries))
+
+
+def verify_archive(path: Path, expected_size: str, expected_sha256: str) -> tuple[bool, str, str]:
+    if not path.exists() or path.stat().st_size == 0:
+        return False, "missing_or_empty", ""
+    if expected_size:
+        try:
+            if path.stat().st_size != int(expected_size):
+                return False, "size_mismatch", ""
+        except ValueError:
+            return False, "invalid_expected_size", ""
+    if not tarfile.is_tarfile(path):
+        return False, "not_a_tar", ""
+    try:
+        with tarfile.open(path) as archive:
+            archive.getmembers()
+    except (tarfile.TarError, OSError) as error:
+        return False, f"tar_invalid: {error}", ""
+    observed_sha256 = sha256_file(path) if expected_sha256 else ""
+    if expected_sha256 and observed_sha256.lower() != expected_sha256.lower():
+        return False, "sha256_mismatch", observed_sha256
+    return True, "verified", observed_sha256
+
+
+def download_one(row: dict[str, str], destination: Path) -> tuple[bool, str]:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    completed = destination.exists() and ".part" not in destination.name
+    if completed:
+        return True, "already_present"
+    curl = shutil.which("curl")
+    if not curl:
+        return False, "curl_not_found"
+    command = [curl, "--fail", "--location", "--retry", "3", "--continue-at", "-", "--output", str(destination), row["url"]]
+    result = subprocess.run(command, check=False, text=True, capture_output=True)
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip().replace("\n", " ")[:500]
+        return False, f"download_failed({result.returncode}): {detail}"
+    return True, "downloaded"
+
+
+def processing_status_allows_cleanup(status_path: Path, raw_files: list[Path]) -> tuple[bool, str]:
+    """Require a successful terminal R status for every archive before deletion."""
+    if not status_path.exists():
+        return False, "missing_gene_status"
+    with status_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    successful = {"completed", "completed_existing", "no_variants_after_filter"}
+    status_by_tar = {
+        str(Path(row["tar_file"]).resolve()): row.get("status", "")
+        for row in rows
+        if row.get("tar_file")
+    }
+    incomplete = [
+        path.name for path in raw_files
+        if status_by_tar.get(str(path.resolve())) not in successful
+    ]
+    if incomplete:
+        return False, "incomplete_processing_status: " + ",".join(incomplete)
+    return True, "all_sources_processed"
+
+
+def remove_raw_files(raw_files: list[Path], status_path: Path) -> list[dict[str, str]]:
+    """Delete only files backed by successful per-source processing status."""
+    allowed, reason = processing_status_allows_cleanup(status_path, raw_files)
+    if not allowed:
+        return [{"raw_file": str(path), "action": "retained", "reason": reason} for path in raw_files]
+    rows = []
+    for path in raw_files:
+        try:
+            path.unlink()
+            rows.append({"raw_file": str(path), "action": "deleted", "reason": "all_sources_processed"})
+        except OSError as error:
+            rows.append({"raw_file": str(path), "action": "delete_failed", "reason": str(error)})
+    return rows
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build and optionally run UKB-PPP paired EUR/EAS exposure batches.")
-    parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets")
-    parser.add_argument("--outdir", default="results/qc/pair_priority")
-    parser.add_argument("--batch-dir", default="results/qc/pair_priority/gene_batches_10")
-    parser.add_argument("--manifest", default="results/qc/pair_priority/ukb_ppp_pair_batch_manifest.tsv")
-    parser.add_argument("--batch-size", type=int, default=10, help="Number of paired genes per batch; defaults to 10.")
-    parser.add_argument("--test", action="store_true", help="Limit to the first 10 alphabetically sorted EUR/EAS paired genes and read only 200 lines per raw file.")
-    parser.add_argument("--test-max-lines", type=int, default=200, help="Raw summary-stat lines to read per file in --test mode, including the header line.")
-    parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
-    parser.add_argument("--exposure-outdir", default="results/exposure_batches")
-    parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
+    parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256.")
+    parser.add_argument("--outdir", default="results/exposure_batches")
+    parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
+    parser.add_argument("--batch-size", type=int, default=10)
+    parser.add_argument("--only-batch", help="Comma-separated batch IDs, e.g. batch_001,batch_002.")
+    parser.add_argument("--max-batches", type=int)
     parser.add_argument("--p-threshold", default="5e-8")
-    parser.add_argument("--run", action="store_true")
-    parser.add_argument("--rewrite-batch-files", action="store_true")
+    parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
+    parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
+    parser.add_argument("--download-only", action="store_true")
+    parser.add_argument(
+        "--delete-raw-after-processing",
+        action="store_true",
+        help="Delete a batch's verified raw archives only after both ancestry outputs and every per-source status succeed.",
+    )
+    parser.add_argument("--run", action="store_true", help="Run downloads and exposure preparation. Without this, write the plan only.")
     parser.add_argument("--stop-on-error", action="store_true")
-    parser.add_argument("--force-rerun-completed", action="store_true")
-    parser.add_argument("--no-eur-first", action="store_true")
-    parser.add_argument("--no-copy-to-local", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.batch_size < 1:
+        raise SystemExit("[ERROR] --batch-size must be positive")
+    if args.delete_raw_after_processing and not args.download_manifest:
+        raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     pd = ensure_pandas()
+    base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    manifest_path = qc_dir / "batch_manifest.tsv"
+    download_manifest = read_download_manifest(Path(args.download_manifest), pd) if args.download_manifest else None
+    raw_audit = scan_valid(base, pd)
+    raw_audit.to_csv(qc_dir / "raw_file_audit.tsv", sep="\t", index=False)
+    genes = paired_genes_from_manifest(download_manifest) if download_manifest is not None else paired_genes_from_raw(raw_audit)
+    if not genes:
+        raise SystemExit("[ERROR] No EUR/EAS paired genes found. Supply --download-manifest or populate --base.")
 
-    base = Path(args.base)
-    outdir = Path(args.outdir)
-    batch_dir = Path(args.batch_dir)
-    manifest_path = Path(args.manifest)
-    exposure_outdir = Path(args.exposure_outdir)
+    rows: list[dict[str, object]] = []
+    for offset in range(0, len(genes), args.batch_size):
+        batch_genes = genes[offset : offset + args.batch_size]
+        batch_id = f"batch_{offset // args.batch_size + 1:03d}"
+        rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", "raw_cleanup": "not_requested", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
+    batch_df = pd.DataFrame(rows)
+    selected_batches = batch_df
+    if args.only_batch:
+        wanted = {value.strip() for value in args.only_batch.split(",") if value.strip()}
+        selected_batches = batch_df[batch_df["batch_id"].isin(wanted)].copy()
+    if args.max_batches is not None:
+        selected_batches = selected_batches.head(args.max_batches).copy()
+    if selected_batches.empty:
+        raise SystemExit("[ERROR] No batches selected")
+    write_atomic(batch_df, manifest_path)
 
-    outdir.mkdir(parents=True, exist_ok=True)
-    batch_dir.mkdir(parents=True, exist_ok=True)
-    exposure_outdir.mkdir(parents=True, exist_ok=True)
-    (exposure_outdir / "logs").mkdir(parents=True, exist_ok=True)
-
-    print(f"[{now()}] scan rawdata: {base}")
-    audit = scan_valid(base, pd)
-    audit.to_csv(outdir / "ukb_ppp_pair_current_file_audit.tsv", sep="\t", index=False)
-
-    valid = audit[audit["is_valid_tar"]].copy() if not audit.empty else audit
-    genes_by = valid.groupby("ancestry")["gene_symbol"].apply(lambda values: set(values.dropna().astype(str))).to_dict() if not valid.empty else {}
-    eur = genes_by.get("EUR", set())
-    eas = genes_by.get("EAS", set())
-    paired_genes_all = sorted(eur & eas)
-    if not paired_genes_all:
-        raise SystemExit("[ERROR] No valid EUR/EAS paired genes found after raw file validity scan")
-
-    if args.test:
-        if len(paired_genes_all) < 10:
-            raise SystemExit(f"[ERROR] --test requires at least 10 EUR/EAS paired genes; found {len(paired_genes_all)}")
-        paired_genes = paired_genes_all[:10]
-        effective_batch_size = 10
-        mode = "test"
-    else:
-        paired_genes = paired_genes_all
-        effective_batch_size = args.batch_size
-        mode = "full"
-
-    (outdir / "ukb_ppp_complete_pair_genes.current.txt").write_text("\n".join(paired_genes_all) + "\n", encoding="utf-8")
-    if args.test:
-        (outdir / "ukb_ppp_test_10genes.current.txt").write_text("\n".join(paired_genes) + "\n", encoding="utf-8")
-    n_batches = (len(paired_genes) + effective_batch_size - 1) // effective_batch_size
-    summary = pd.DataFrame([{
-        "timestamp": now(),
-        "valid_EUR_genes": len(eur),
-        "valid_EAS_genes": len(eas),
-        "complete_pair_genes": len(paired_genes_all),
-        "selected_genes": len(paired_genes),
-        "mode": mode,
-        "test_max_lines_including_header": args.test_max_lines if args.test else "",
-        "batch_size": effective_batch_size,
-        "n_batches": n_batches,
-    }])
-    summary.to_csv(outdir / "ukb_ppp_pair_batch_summary.tsv", sep="\t", index=False)
-    print(summary.to_string(index=False))
-
-    old = load_manifest(manifest_path, pd)
-    old_map = {str(row.batch_id): row for _, row in old.iterrows()} if not old.empty and "batch_id" in old.columns else {}
-
-    rows = []
-    for offset in range(0, len(paired_genes), effective_batch_size):
-        genes = paired_genes[offset : offset + effective_batch_size]
-        batch_id = f"batch_{offset // effective_batch_size + 1:03d}"
-        batch_file = batch_dir / batch_fname(batch_id, genes)
-        expected_output = exposure_outdir / f"exposure_{batch_id}.tsv"
-        log_file = exposure_outdir / "logs" / f"{batch_id}.runner.log"
-
-        old_row = old_map.get(batch_id)
-        status = "pending"
-        started = ""
-        completed = ""
-        returncode = ""
-        message = ""
-        if old_row is not None:
-            status = str(getattr(old_row, "status", "pending"))
-            started = str(getattr(old_row, "started_at", ""))
-            completed = str(getattr(old_row, "completed_at", ""))
-            returncode = str(getattr(old_row, "returncode", ""))
-            message = str(getattr(old_row, "message", ""))
-
-        output_exists = expected_output.exists() and expected_output.stat().st_size > 0
-        if output_exists and status in {"pending", "running", "failed", "output_missing", "completed", "completed_existing"}:
-            status = "completed_existing"
-
-        rows.append({
-            "batch_id": batch_id,
-            "n_genes": len(genes),
-            "genes": ",".join(genes),
-            "batch_file": str(batch_file),
-            "batch_file_ok": batch_file.exists(),
-            "expected_output": str(expected_output),
-            "output_exists": output_exists,
-            "status": status,
-            "started_at": started,
-            "completed_at": completed,
-            "returncode": returncode,
-            "log_file": str(log_file),
-            "message": message,
-            "mode": mode,
-            "test_max_lines_including_header": args.test_max_lines if args.test else "",
-        })
-
-    manifest = pd.DataFrame(rows)
-    for _, row in manifest.iterrows():
-        batch_file = Path(row.batch_file)
-        if args.rewrite_batch_files or not batch_file.exists():
-            batch_file.write_text("\n".join(str(row.genes).split(",")) + "\n", encoding="utf-8")
-    if not manifest.empty:
-        manifest["batch_file_ok"] = manifest["batch_file"].map(lambda value: Path(value).exists())
-    write_atomic(manifest, manifest_path)
-    print(f"[{now()}] manifest updated: {manifest_path}")
-
-    if not args.run:
-        return
-
-    for idx, row in manifest.iterrows():
-        batch_id = str(row.batch_id)
-        expected_output = Path(row.expected_output)
-        output_exists = expected_output.exists() and expected_output.stat().st_size > 0
-        if not args.force_rerun_completed and str(row.status) in {"completed", "completed_existing"} and output_exists:
-            print(f"[SKIP] {batch_id}")
-            continue
-
-        batch_file = Path(row.batch_file)
-        if not batch_file.exists():
-            manifest.loc[idx, "status"] = "batch_file_error"
-            manifest.loc[idx, "message"] = "Batch file missing"
-            write_atomic(manifest, manifest_path)
-            if args.stop_on_error:
-                raise SystemExit(f"[ERROR] missing {batch_file}")
-            continue
-
-        cmd = [
-            "Rscript", args.rscript,
-            "--gene-file", str(batch_file),
-            "--batch-id", batch_id,
-            "--outdir", str(exposure_outdir),
-            "--rawdir", str(base),
-            "--tmpdir", args.tmpdir,
-            "--p-threshold", str(args.p_threshold),
-            "--ancestries", "EUR,EAS",
-        ]
-        if args.test:
-            cmd.extend(["--test", "--max-file-lines", str(args.test_max_lines)])
-        if not args.test and not args.no_eur_first:
-            cmd.append("--eur-first")
-        if not args.no_copy_to_local:
-            cmd.append("--copy-to-local")
-
-        log_file = Path(row.log_file)
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        manifest.loc[idx, "status"] = "running"
-        manifest.loc[idx, "started_at"] = now()
-        manifest.loc[idx, "message"] = "Started"
-        write_atomic(manifest, manifest_path)
-
-        print("[RUN]", batch_id, " ".join(cmd))
-        with log_file.open("w", encoding="utf-8") as handle:
-            result = subprocess.run(cmd, stdout=handle, stderr=subprocess.STDOUT, text=True, check=False)
-
-        output_exists = expected_output.exists() and expected_output.stat().st_size > 0
-        manifest.loc[idx, "returncode"] = result.returncode
-        manifest.loc[idx, "completed_at"] = now()
-        manifest.loc[idx, "output_exists"] = output_exists
-
-        if result.returncode != 0:
-            manifest.loc[idx, "status"] = "failed"
-            manifest.loc[idx, "message"] = f"Rscript failed. See {log_file}"
-            write_atomic(manifest, manifest_path)
-            print("[FAILED]", batch_id)
-            if args.stop_on_error:
-                raise SystemExit(1)
+    for index, batch in selected_batches.iterrows():
+        batch_id, batch_genes = str(batch.batch_id), str(batch.genes).split(",")
+        print(f"\n===== {batch_id}: {len(batch_genes)} genes =====")
+        source_rows: list[dict[str, str]] = []
+        if download_manifest is not None:
+            selected = download_manifest[download_manifest["gene_symbol"].isin(batch_genes)]
+            source_rows = selected.to_dict("records")
         else:
-            if output_exists:
-                manifest.loc[idx, "status"] = "completed"
-                manifest.loc[idx, "message"] = "Completed"
-                print("[DONE]", batch_id)
-            else:
-                manifest.loc[idx, "status"] = "output_missing"
-                manifest.loc[idx, "message"] = f"Output missing: {expected_output}"
-                print("[WARN]", batch_id, "output missing")
-                write_atomic(manifest, manifest_path)
-                if args.stop_on_error:
-                    raise SystemExit(1)
-            write_atomic(manifest, manifest_path)
+            for gene in batch_genes:
+                for ancestry in ANCESTRIES:
+                    source_rows.append({"gene_symbol": gene, "ancestry": ancestry, "source_file": "", "url": ""})
 
-    print(f"[{now()}] done. manifest={manifest_path}")
+        audit_rows = []
+        raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
+        download_failed = False
+        for source in source_rows:
+            ancestry, gene = source["ancestry"], source["gene_symbol"]
+            destination = base / ancestry / source["source_file"] if source["source_file"] else base / ancestry
+            action, message = "not_requested", "existing_raw_mode"
+            if args.run and download_manifest is not None:
+                ok, message = download_one(source, destination)
+                action = "download" if ok else "download_failed"
+                if not ok:
+                    download_failed = True
+            if source["source_file"]:
+                raw_files_by_ancestry[ancestry].append(destination)
+                ok, verification, observed_sha = verify_archive(destination, source.get("expected_size_bytes", ""), source.get("sha256", ""))
+            else:
+                matches = list((base / ancestry).glob(f"{gene}_*.tar"))
+                raw_files_by_ancestry[ancestry].extend(matches)
+                ok, verification, observed_sha = bool(matches), "raw_archive_found" if matches else "missing_raw_archive", ""
+            audit_rows.append({"timestamp": now(), "batch_id": batch_id, "gene_symbol": gene, "ancestry": ancestry, "source_file": source["source_file"], "destination": str(destination), "action": action, "download_message": message, "verified": ok, "verification": verification, "observed_sha256": observed_sha})
+            if not ok:
+                download_failed = True
+        download_audit = qc_dir / "downloads" / f"{batch_id}.tsv"
+        write_atomic(pd.DataFrame(audit_rows), download_audit)
+        if download_failed:
+            batch_df.loc[index, "status"] = "download_or_verification_failed"
+            write_atomic(batch_df, manifest_path)
+            if args.stop_on_error:
+                raise SystemExit(f"[ERROR] {batch_id} download/verification failed; see {download_audit}")
+            continue
+        if not args.run or args.download_only:
+            batch_df.loc[index, "status"] = "download_verified" if args.run else "planned"
+            write_atomic(batch_df, manifest_path)
+            continue
+
+        gene_file = qc_dir / "gene_batches" / f"{batch_id}.txt"
+        gene_file.parent.mkdir(parents=True, exist_ok=True)
+        gene_file.write_text("\n".join(batch_genes) + "\n", encoding="utf-8")
+        failed = False
+        for ancestry in ANCESTRIES:
+            output = outdir / ancestry / f"exposure_{batch_id}.tsv"
+            log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            command = ["Rscript", args.rscript, "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry]
+            result = subprocess.run(command, check=False, text=True, capture_output=True)
+            log.write_text(result.stdout + result.stderr, encoding="utf-8")
+            if result.returncode or not output.exists():
+                failed = True
+                print(f"[ERROR] {batch_id} {ancestry}; see {log}")
+        if failed:
+            batch_df.loc[index, "status"] = "processing_failed"
+            batch_df.loc[index, "raw_cleanup"] = "retained_processing_failed"
+        elif args.delete_raw_after_processing:
+            cleanup_rows = []
+            for ancestry in ANCESTRIES:
+                status_path = outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv"
+                for row in remove_raw_files(raw_files_by_ancestry[ancestry], status_path):
+                    cleanup_rows.append({"batch_id": batch_id, "ancestry": ancestry, **row})
+            cleanup_path = qc_dir / "raw_cleanup" / f"{batch_id}.tsv"
+            write_atomic(pd.DataFrame(cleanup_rows), cleanup_path)
+            record_raw_cleanup_in_manifest(download_manifest, cleanup_rows, batch_id)
+            write_atomic(download_manifest, Path(args.download_manifest))
+            cleanup_failed = any(row["action"] != "deleted" for row in cleanup_rows)
+            batch_df.loc[index, "status"] = "completed_raw_retained" if cleanup_failed else "completed_raw_deleted"
+            batch_df.loc[index, "raw_cleanup"] = str(cleanup_path)
+        else:
+            batch_df.loc[index, "status"] = "completed"
+            batch_df.loc[index, "raw_cleanup"] = "retained_flag_not_set"
+        write_atomic(batch_df, manifest_path)
+        if failed and args.stop_on_error:
+            raise SystemExit(f"[ERROR] {batch_id} processing failed")
+
+    print(f"[INFO] Batch manifest: {manifest_path}")
 
 
 if __name__ == "__main__":
