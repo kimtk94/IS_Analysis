@@ -94,6 +94,36 @@ def read_download_manifest(path: Path, pd: Any) -> Any:
     return manifest
 
 
+def hydrate_selected_synapse_metadata(
+    sources: list[dict[str, str]], manifest: Any, manifest_path: Path,
+) -> list[dict[str, str]]:
+    """Look up checksums only for the current batch's Synapse source files."""
+    pending = [
+        row["synapse_id"] for row in sources
+        if row.get("synapse_id", "") and (not row.get("expected_size_bytes", "") or not row.get("md5", ""))
+    ]
+    if not pending:
+        return sources
+    from synapse_metadata import fetch_file_metadata_many, synapse_token
+
+    def progress(completed: int, total: int) -> None:
+        print(f"[INFO] Synapse metadata: {completed}/{total} files")
+
+    metadata = fetch_file_metadata_many(pending, token=synapse_token(), max_concurrency=8, progress=progress)
+    for source in sources:
+        details = metadata.get(source.get("synapse_id", ""))
+        if not details:
+            continue
+        source.update(details)
+        mask = manifest["synapse_id"].eq(source["synapse_id"])
+        for column, value in details.items():
+            if column not in manifest.columns:
+                manifest[column] = ""
+            manifest.loc[mask, column] = value
+    write_atomic(manifest, manifest_path)
+    return sources
+
+
 def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
     """Persist the raw lifecycle state in the source manifest before continuing."""
     for column in ("pipeline_batch_id", "raw_lifecycle", "raw_cleanup_at", "raw_cleanup_reason"):
@@ -287,6 +317,16 @@ def main() -> None:
         audit_rows = []
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
         download_failed = False
+        if args.run and download_manifest is not None:
+            try:
+                source_rows = hydrate_selected_synapse_metadata(source_rows, download_manifest, Path(args.download_manifest))
+            except (RuntimeError, ValueError, OSError) as error:
+                batch_df.loc[index, "status"] = "metadata_fetch_failed"
+                write_atomic(batch_df, manifest_path)
+                print(f"[ERROR] {batch_id} Synapse metadata lookup failed: {error}")
+                if args.stop_on_error:
+                    raise SystemExit(f"[ERROR] {batch_id} metadata lookup failed")
+                continue
         for source in source_rows:
             ancestry, gene = source["ancestry"], source["gene_symbol"]
             destination = base / ancestry / source["source_file"] if source["source_file"] else base / ancestry

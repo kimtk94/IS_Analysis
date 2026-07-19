@@ -43,6 +43,7 @@ echo "[TEST] Python syntax"
 "${PYTHON_BIN}" -m py_compile \
   scripts/00_run_full_audit_final.py \
   scripts/build_ukb_ppp_download_manifest.py \
+  scripts/synapse_metadata.py \
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
   scripts/colab_download_gigastroke_gwas.py
 
@@ -62,7 +63,7 @@ import sys
 with open(sys.argv[1], newline="", encoding="utf-8") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
 assert [row["synapse_id"] for row in rows] == ["syn1001", "syn1002"]
-assert [row["expected_size_bytes"] for row in rows] == ["123456", "234567"]
+assert [row["expected_size_bytes"] for row in rows] == ["", ""]
 assert [row["ancestry"] for row in rows] == ["EUR", "EAS"]
 assert [row["synapse_parent_id"] for row in rows] == ["syn51365303", "syn51365306"]
 assert all(row["url"].startswith("https://www.synapse.org/Synapse:syn") for row in rows)

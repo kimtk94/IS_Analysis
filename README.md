@@ -13,11 +13,11 @@ and outputs under `/content/drive/MyDrive/IS_Analysis_V2/`. Do not use the
 ephemeral Colab clone as the data workspace.
 
 The manifest is generated from explicit Synapse parent folders; do not type gene
-symbols or archive rows manually. It contains `ancestry`, the gene symbol inferred
-from the archive filename, source URL/ID, the explicit `synapse_parent_id`, and
-available size/checksum metadata. A `synapse_id` column makes the runner download
-through `synapseclient` rather than treating the human-readable Synapse URL as a
-direct archive URL.
+symbols or archive rows manually. Initial creation records only `ancestry`, the
+gene symbol inferred from the archive filename, source URL/ID, and the explicit
+`synapse_parent_id`. Before each 10-gene batch, the runner retrieves size and
+checksum metadata only for that batch's Synapse files (maximum 8 concurrent
+requests), persists it in the manifest, then downloads and verifies the files.
 Every selected gene must have at least one EUR and one EAS row; genes without a
 pair are intentionally excluded. This TSV is also the **raw-data lifecycle
 manifest**: when cleanup is enabled, the runner writes `pipeline_batch_id`,
@@ -93,8 +93,10 @@ echo "[DONE] Manifest 생성 완료"
 echo "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
 ```
 
-This records each file's Synapse ID, canonical Synapse URL, byte size, and MD5
-without downloading the archive. For a reproducible or offline review, export
+This records each file's Synapse ID, canonical Synapse URL, and parent ID without
+downloading archives or making a per-file checksum request. The runner lazily
+retrieves size/MD5 metadata for the active batch and emits progress every 100
+metadata lookups. For a reproducible or offline review, export
 the folder metadata from Synapse and use `--synapse-metadata-file`; exported
 rows must contain an ancestry and `synapse_parent_id`. The folder-query and
 subsequent downloads require `synapseclient` and Synapse authentication; they

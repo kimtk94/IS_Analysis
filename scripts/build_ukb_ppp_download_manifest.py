@@ -9,7 +9,6 @@ data-setup environment.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import csv
 import hashlib
 import importlib.util
@@ -80,30 +79,26 @@ def metadata_from_parent(parent_id: str, token: str, ancestry: str = "") -> list
     if importlib.util.find_spec("synapseclient") is None:
         raise RuntimeError("synapseclient is required for --synapse-parent-id; install it during the user-run setup phase.")
     import synapseclient
-    from synapseclient.api import get_children, get_entity
-    from synapseclient.api.file_services import get_file_handle_for_download_async
+    from synapseclient.api import get_children
 
     syn = synapseclient.Synapse()
     syn.login(authToken=token or None, silent=not bool(token))
 
     async def collect_metadata() -> list[dict[str, str]]:
         rows = []
+        count = 0
         async for child in get_children(parent=parent_id, include_types=["file"], synapse_client=syn):
-            entity = await get_entity(child["id"], synapse_client=syn)
-            handle_id = entity.get("dataFileHandleId")
-            if not handle_id:
-                continue
-            download_info = await get_file_handle_for_download_async(
-                str(handle_id), child["id"], synapse_client=syn,
-            )
-            handle = download_info.get("fileHandle", {})
             rows.append(normalize_metadata({
-                "id": child["id"], "name": child["name"], "contentSize": str(handle.get("contentSize", "")),
-                "contentMd5": handle.get("contentMd5", ""), "contentSha256": handle.get("contentSha256", ""),
+                "id": child["id"], "name": child["name"],
                 "ancestry": ancestry, "synapse_parent_id": parent_id,
             }))
+            count += 1
+            if count % 100 == 0:
+                print(f"[INFO] {ancestry}/{parent_id}: discovered {count} files")
+        print(f"[INFO] {ancestry}/{parent_id}: discovered {count} files")
         return rows
 
+    import asyncio
     return asyncio.run(collect_metadata())
 
 
@@ -164,17 +159,24 @@ def build_manifest(targets: list[dict[str, str]], metadata: list[dict[str, str]]
 
 def build_manifest_from_metadata(metadata: list[dict[str, str]]) -> list[dict[str, str]]:
     """Build all EUR/EAS manifest rows from explicitly scoped folder metadata."""
-    targets = []
+    output = []
     for item in metadata:
         if item["ancestry"] not in {"EUR", "EAS"} or not item["source_file"].endswith(".tar"):
             continue
         gene = item["source_file"].split("_", 1)[0].upper()
         if not gene:
             raise ValueError(f"Cannot infer gene symbol from {item['source_file']}")
-        targets.append({"ancestry": item["ancestry"], "gene_symbol": gene, "source_file": item["source_file"], "synapse_id": item["synapse_id"]})
-    if not targets:
+        output.append({
+            "ancestry": item["ancestry"], "gene_symbol": gene, "source_file": item["source_file"],
+            "url": f"https://www.synapse.org/Synapse:{item['synapse_id']}",
+            "expected_size_bytes": "", "sha256": "", "md5": "",
+            "synapse_id": item["synapse_id"], "synapse_parent_id": item["synapse_parent_id"],
+        })
+    if not output:
         raise ValueError("No EUR/EAS .tar archives found in the supplied Synapse metadata")
-    return build_manifest(targets, metadata)
+    if len({(row["ancestry"], row["gene_symbol"], row["source_file"]) for row in output}) != len(output):
+        raise ValueError("Synapse folder contains duplicate ancestry/gene/source_file rows")
+    return output
 
 
 def write_tsv(path: Path, rows: list[dict[str, str]]) -> None:
