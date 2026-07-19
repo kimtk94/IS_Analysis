@@ -174,7 +174,12 @@ standardize_pqtl <- function(dt, gene, ancestry, source_file) {
 
   out[, samplesize := if (!is.na(c_n)) suppressWarnings(as.numeric(dt[[c_n]])) else NA_real_]
   out[, eaf := if (!is.na(c_eaf)) suppressWarnings(as.numeric(dt[[c_eaf]])) else NA_real_]
-  out[, exposure := paste(gene_symbol, ancestry, sep = "__")]
+  # A gene can have more than one UKB-PPP archive (for example, different
+  # OID/UniProt/panel entries).  Keep those exposures distinct downstream:
+  # gene + ancestry alone would otherwise give multiple biological entries the
+  # same TwoSampleMR exposure identifier.
+  source_id <- safe_label(tools::file_path_sans_ext(basename(source_file)))
+  out[, exposure := paste(gene_symbol, ancestry, source_id, sep = "__")]
   out[, id.exposure := exposure]
   out[, beta.exposure := beta]
   out[, se.exposure := se]

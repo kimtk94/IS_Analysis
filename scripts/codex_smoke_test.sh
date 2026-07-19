@@ -122,4 +122,50 @@ PY
 echo "[TEST] Audit fixture"
 "${PYTHON_BIN}" scripts/00_run_full_audit_final.py --config "${RUNTIME_CONFIG}" --fail-on-review
 
+echo "[TEST] Same-gene multi-archive exposure preservation"
+DUPLICATE_RAW_DIR="${SMOKE_ROOT}/duplicate_gene_raw"
+DUPLICATE_OUT_DIR="${SMOKE_ROOT}/duplicate_gene_output"
+DUPLICATE_GENE_FILE="${SMOKE_ROOT}/duplicate_gene.txt"
+export DUPLICATE_RAW_DIR DUPLICATE_OUT_DIR DUPLICATE_GENE_FILE
+"${PYTHON_BIN}" - <<'PY'
+import os
+import tarfile
+from io import BytesIO
+from pathlib import Path
+
+member = Path("tests/fixtures/raw_member.tsv").read_bytes()
+raw_dir = Path(os.environ["DUPLICATE_RAW_DIR"])
+for filename in ("ALPHA_P12345_OID1_v1_PANEL.tar", "ALPHA_Q99999_OID2_v1_PANEL.tar"):
+    path = raw_dir / "EUR" / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(path, "w") as archive:
+        info = tarfile.TarInfo("ALPHA.tsv")
+        info.size = len(member)
+        archive.addfile(info, BytesIO(member))
+Path(os.environ["DUPLICATE_GENE_FILE"]).write_text("ALPHA\n", encoding="utf-8")
+PY
+Rscript scripts/01_prepare_exposure_fast.R \
+  --gene-file "${DUPLICATE_GENE_FILE}" \
+  --batch-id duplicate_gene \
+  --outdir "${DUPLICATE_OUT_DIR}" \
+  --rawdir "${DUPLICATE_RAW_DIR}" \
+  --ancestries EUR \
+  --no-cis-filter
+"${PYTHON_BIN}" - "${DUPLICATE_OUT_DIR}/exposure_duplicate_gene.tsv" <<'PY'
+import csv
+import sys
+
+with open(sys.argv[1], newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+assert len(rows) == 4, f"Expected 4 rows from two archives, found {len(rows)}"
+assert {row["source_file"] for row in rows} == {
+    "ALPHA_P12345_OID1_v1_PANEL.tar",
+    "ALPHA_Q99999_OID2_v1_PANEL.tar",
+}
+exposures = {row["id.exposure"] for row in rows}
+assert len(exposures) == 2, f"Expected distinct exposure IDs per archive, found {exposures}"
+assert all(row["gene_symbol"] == "ALPHA" and row["ancestry"] == "EUR" for row in rows)
+print("[OK] Both same-gene archives retained with distinct exposure IDs")
+PY
+
 echo "[OK] Codex smoke test completed"
