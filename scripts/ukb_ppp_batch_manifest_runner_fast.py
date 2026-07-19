@@ -144,6 +144,13 @@ def restore_batch_state(batch_df: Any, manifest_path: Path, pd: Any) -> Any:
     return batch_df
 
 
+def print_batch_state(batch_df: Any, label: str) -> None:
+    """Print a compact checkpoint summary suitable for Colab stdout."""
+    counts = batch_df["status"].value_counts().sort_index()
+    summary = ", ".join(f"{status}={count}" for status, count in counts.items())
+    print(f"[INFO] {label}: {len(batch_df)} batches ({summary})")
+
+
 def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
     """Persist the raw lifecycle state in the source manifest before continuing."""
     for column in ("pipeline_batch_id", "raw_lifecycle", "raw_cleanup_at", "raw_cleanup_reason"):
@@ -315,6 +322,7 @@ def main() -> None:
         rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", "raw_cleanup": "not_requested", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
     batch_df = pd.DataFrame(rows)
     batch_df = restore_batch_state(batch_df, manifest_path, pd)
+    print_batch_state(batch_df, "Current batch state")
     selected_batches = batch_df
     if args.only_batch:
         wanted = {value.strip() for value in args.only_batch.split(",") if value.strip()}
@@ -329,6 +337,7 @@ def main() -> None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:
         raise SystemExit("[ERROR] No batches selected")
+    print(f"[INFO] Batches selected for this run: {', '.join(selected_batches['batch_id'].tolist())}")
     write_atomic(batch_df, manifest_path)
     progress_path = qc_dir / "batch_progress.tsv"
     progress_rows: list[dict[str, str]] = []
@@ -444,6 +453,7 @@ def main() -> None:
         if failed and args.stop_on_error:
             raise SystemExit(f"[ERROR] {batch_id} processing failed")
 
+    print_batch_state(batch_df, "Final batch state")
     print(f"[INFO] Batch manifest: {manifest_path}")
     print(f"[INFO] Batch progress: {progress_path}")
 
