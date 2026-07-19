@@ -424,6 +424,10 @@ def main() -> None:
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
     existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
+    if existing_raw_base is None:
+        print("[INFO] Existing raw mode: OFF (all missing sources use normal download handling)", flush=True)
+    else:
+        print(f"[INFO] Existing raw mode: ON (source={existing_raw_base}; staging={base})", flush=True)
     qc_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = qc_dir / "batch_manifest.tsv"
     download_manifest = read_download_manifest(Path(args.download_manifest), pd) if args.download_manifest else None
@@ -433,6 +437,7 @@ def main() -> None:
     if not genes:
         raise SystemExit("[ERROR] No EUR/EAS paired genes found. Supply --download-manifest or populate --base.")
     if existing_raw_base is not None and download_manifest is not None and not manifest_path.exists():
+        print("[INFO] Existing raw mode: building initial 10-gene plan from archive inventory", flush=True)
         genes = prioritize_genes_from_existing_raw(genes, download_manifest, existing_raw_base)
 
     rows: list[dict[str, object]] = []
@@ -501,9 +506,13 @@ def main() -> None:
 
         staged_existing: dict[str, Path] = {}
         if existing_raw_base is not None:
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: checking {len(source_rows)} source archive(s) in existing raw base", flush=True)
             staged_existing = stage_existing_raw_archives(source_rows, base, existing_raw_base)
             if staged_existing:
                 print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {len(staged_existing)} validated archive(s) from {existing_raw_base}", flush=True)
+            else:
+                print(f"[INFO] Batch {position}/{len(selected_batches)}: no new valid existing archives staged; missing sources will use normal download handling", flush=True)
+            record_progress(batch_id, position, "existing_raw_checked", f"staged={len(staged_existing)} of {len(source_rows)}")
 
         audit_rows = []
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}

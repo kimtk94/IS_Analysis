@@ -186,6 +186,9 @@ Before processing starts, stdout prints every selected execution-plan entry as
 `[PLAN] position/total batch_ID: genes`. During processing it prints the matching
 `Batch position/total` header and phase messages, so the batch currently running
 can be identified from either the notebook output or `batch_progress.tsv`.
+When an existing raw base is configured, stdout also prints `Existing raw mode:
+ON`, the source/staging locations, and for every batch the number of archive
+sources checked and staged before Synapse fallback.
 
 With `--delete-raw-after-processing`, the default cleanup removes only the
 staging symlink and preserves the separate original. To delete the separate
