@@ -141,6 +141,10 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --stop-on-error
 ```
 
+The runner flushes current batch and phase messages to stdout. If Colab's
+`%%bash` output remains buffered in the notebook UI, use `python3 -u` in place
+of `python3` in the same command.
+
 To safely resume a single failed batch, use `--only-batch batch_003`. To only
 download and validate archives, add `--download-only` with `--run`.
 
@@ -153,6 +157,13 @@ prevents already processed data from being downloaded or analysed again after a
 Colab interruption. Failed or incomplete batches remain eligible for the next
 run. Use `--only-batch batch_003` to resume one failed batch, or add
 `--rerun-completed` only when deliberately rerunning completed work.
+
+Before retrying a batch saved as `running`, metadata/download failed, or
+processing failed, the runner deletes only stale **derived** batch outputs and
+per-gene status files, then recreates them. Verified raw archives are retained
+and reused; they are not discarded until normal successful raw cleanup. Each
+reset is recorded in
+`results/qc/batch_pipeline/partial_cleanup/batch_###.tsv`.
 
 `--delete-raw-after-processing` is the production disk-space cleanup step. It
 requires `--download-manifest`; raw-only discovery mode cannot delete files.

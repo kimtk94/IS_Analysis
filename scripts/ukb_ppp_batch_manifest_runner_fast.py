@@ -26,6 +26,7 @@ from typing import Any
 ANCESTRIES = ("EUR", "EAS")
 REQUIRED_DOWNLOAD_COLUMNS = {"ancestry", "gene_symbol", "source_file", "url"}
 COMPLETED_BATCH_STATUSES = {"completed", "completed_raw_deleted", "completed_raw_retained"}
+RESTART_CLEANUP_STATUSES = {"running", "metadata_fetch_failed", "download_or_verification_failed", "processing_failed"}
 
 
 def now() -> str:
@@ -108,7 +109,7 @@ def hydrate_selected_synapse_metadata(
     from synapse_metadata import fetch_file_metadata_many, synapse_token
 
     def progress(completed: int, total: int) -> None:
-        print(f"[INFO] Synapse metadata: {completed}/{total} files")
+        print(f"[INFO] Synapse metadata: {completed}/{total} files", flush=True)
 
     metadata = fetch_file_metadata_many(pending, token=synapse_token(), max_concurrency=8, progress=progress)
     for source in sources:
@@ -148,7 +149,28 @@ def print_batch_state(batch_df: Any, label: str) -> None:
     """Print a compact checkpoint summary suitable for Colab stdout."""
     counts = batch_df["status"].value_counts().sort_index()
     summary = ", ".join(f"{status}={count}" for status, count in counts.items())
-    print(f"[INFO] {label}: {len(batch_df)} batches ({summary})")
+    print(f"[INFO] {label}: {len(batch_df)} batches ({summary})", flush=True)
+
+
+def clean_incomplete_batch_outputs(batch_id: str, outdir: Path, qc_dir: Path, pd: Any) -> None:
+    """Remove stale derived outputs before retrying an interrupted batch.
+
+    Verified raw archives are retained as input evidence and can be reused.
+    """
+    candidates = []
+    for ancestry in ANCESTRIES:
+        candidates.extend([
+            outdir / ancestry / f"exposure_{batch_id}.tsv",
+            outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv",
+        ])
+    rows = []
+    for path in candidates:
+        if path.exists():
+            path.unlink()
+            rows.append({"path": str(path), "action": "deleted_stale_derived_output"})
+    cleanup_path = qc_dir / "partial_cleanup" / f"{batch_id}.tsv"
+    write_atomic(pd.DataFrame(rows, columns=["path", "action"]), cleanup_path)
+    print(f"[INFO] Reset incomplete derived outputs for {batch_id}; retained verified raw archives", flush=True)
 
 
 def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
@@ -331,13 +353,13 @@ def main() -> None:
         completed = selected_batches["status"].isin(COMPLETED_BATCH_STATUSES)
         skipped = int(completed.sum())
         if skipped:
-            print(f"[INFO] Skipping {skipped} completed batch(es); use --rerun-completed to override")
+            print(f"[INFO] Skipping {skipped} completed batch(es); use --rerun-completed to override", flush=True)
         selected_batches = selected_batches[~completed].copy()
     if args.max_batches is not None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:
         raise SystemExit("[ERROR] No batches selected")
-    print(f"[INFO] Batches selected for this run: {', '.join(selected_batches['batch_id'].tolist())}")
+    print(f"[INFO] Batches selected for this run: {', '.join(selected_batches['batch_id'].tolist())}", flush=True)
     write_atomic(batch_df, manifest_path)
     progress_path = qc_dir / "batch_progress.tsv"
     progress_rows: list[dict[str, str]] = []
@@ -351,7 +373,10 @@ def main() -> None:
 
     for position, (index, batch) in enumerate(selected_batches.iterrows(), start=1):
         batch_id, batch_genes = str(batch.batch_id), str(batch.genes).split(",")
-        print(f"\n===== Batch {position}/{len(selected_batches)}: {batch_id} ({len(batch_genes)} genes) =====")
+        previous_status = str(batch_df.loc[index, "status"])
+        print(f"\n===== Batch {position}/{len(selected_batches)}: {batch_id} ({len(batch_genes)} genes; previous={previous_status}) =====", flush=True)
+        if args.run and previous_status in RESTART_CLEANUP_STATUSES:
+            clean_incomplete_batch_outputs(batch_id, outdir, qc_dir, pd)
         batch_df.loc[index, "status"] = "running"
         write_atomic(batch_df, manifest_path)
         record_progress(batch_id, position, "started", f"{len(batch_genes)} genes")
@@ -368,18 +393,18 @@ def main() -> None:
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
         download_failed = False
         if args.run and download_manifest is not None:
-            print(f"[INFO] Batch {position}/{len(selected_batches)}: looking up selected Synapse metadata")
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: looking up selected Synapse metadata", flush=True)
             try:
                 source_rows = hydrate_selected_synapse_metadata(source_rows, download_manifest, Path(args.download_manifest))
             except (RuntimeError, ValueError, OSError) as error:
                 batch_df.loc[index, "status"] = "metadata_fetch_failed"
                 write_atomic(batch_df, manifest_path)
                 record_progress(batch_id, position, "metadata_fetch_failed", str(error))
-                print(f"[ERROR] {batch_id} Synapse metadata lookup failed: {error}")
+                print(f"[ERROR] {batch_id} Synapse metadata lookup failed: {error}", flush=True)
                 if args.stop_on_error:
                     raise SystemExit(f"[ERROR] {batch_id} metadata lookup failed")
                 continue
-        print(f"[INFO] Batch {position}/{len(selected_batches)}: verifying {len(source_rows)} source archives")
+        print(f"[INFO] Batch {position}/{len(selected_batches)}: verifying {len(source_rows)} source archives", flush=True)
         for source in source_rows:
             ancestry, gene = source["ancestry"], source["gene_symbol"]
             destination = base / ancestry / source["source_file"] if source["source_file"] else base / ancestry
@@ -419,7 +444,7 @@ def main() -> None:
         gene_file.write_text("\n".join(batch_genes) + "\n", encoding="utf-8")
         failed = False
         for ancestry in ANCESTRIES:
-            print(f"[INFO] Batch {position}/{len(selected_batches)}: processing {ancestry}")
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: processing {ancestry}", flush=True)
             output = outdir / ancestry / f"exposure_{batch_id}.tsv"
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
@@ -428,7 +453,7 @@ def main() -> None:
             log.write_text(result.stdout + result.stderr, encoding="utf-8")
             if result.returncode or not output.exists():
                 failed = True
-                print(f"[ERROR] {batch_id} {ancestry}; see {log}")
+                print(f"[ERROR] {batch_id} {ancestry}; see {log}", flush=True)
         if failed:
             batch_df.loc[index, "status"] = "processing_failed"
             batch_df.loc[index, "raw_cleanup"] = "retained_processing_failed"
@@ -454,8 +479,8 @@ def main() -> None:
             raise SystemExit(f"[ERROR] {batch_id} processing failed")
 
     print_batch_state(batch_df, "Final batch state")
-    print(f"[INFO] Batch manifest: {manifest_path}")
-    print(f"[INFO] Batch progress: {progress_path}")
+    print(f"[INFO] Batch manifest: {manifest_path}", flush=True)
+    print(f"[INFO] Batch progress: {progress_path}", flush=True)
 
 
 if __name__ == "__main__":
