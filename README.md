@@ -24,6 +24,18 @@ manifest**: when cleanup is enabled, the runner writes `pipeline_batch_id`,
 `raw_lifecycle`, `raw_cleanup_at`, and `raw_cleanup_reason` back into this same
 file. Keep it on Drive and do not delete or replace it while a run is active.
 
+### Multiple archives for the same gene
+
+Multiple archive rows for one gene are supported and are **not** collapsed. The
+manifest key is `(ancestry, gene_symbol, source_file)`, so each distinct archive
+is downloaded, verified, and processed. The exposure preparation stage retains
+the original archive in `source_file` and gives every archive a distinct
+`id.exposure` made from `gene_symbol`, ancestry, and the archive stem. This
+prevents OID/UniProt/panel entries for the same gene from being merged in a
+downstream MR step. `logs/<batch>_gene_status.tsv` has one row per archive;
+check it for `completed`, `no_variants_after_filter`, or `failed` status before
+interpreting a batch result.
+
 ### Build the manifest from Synapse metadata
 
 Do not manually fill archive sizes, hashes, or genes. In the data-setup
