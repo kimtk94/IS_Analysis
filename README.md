@@ -29,7 +29,43 @@ file. Keep it on Drive and do not delete or replace it while a run is active.
 Do not manually fill archive sizes, hashes, or genes. In the data-setup
 environment, explicitly provide the UKB-PPP **EUR** and **EAS** parent folders;
 the builder enumerates their `.tar` files and derives the gene symbol from the
-filename:
+filename. Execute the following **Colab cells in order**.
+
+**1. Python cell — mount Google Drive.**
+
+```python
+from google.colab import drive
+
+drive.mount("/content/drive")
+```
+
+**2. Bash cell — install all runtime dependencies, including `synapseclient`.**
+
+```bash
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+cd "${CODE_ROOT}"
+bash scripts/setup_codex_env.sh
+```
+
+`scripts/setup_codex_env.sh` installs Python packages from `requirements.txt`,
+which includes `synapseclient>=4.9` (the non-deprecated Synapse child-listing
+API), and installs the R dependencies needed for the
+batch preparation stage. Run this only in the user-run Colab setup environment,
+never as part of fixture-only PR review; see [AGENTS.md](AGENTS.md).
+
+**3. Python cell — set the Synapse personal access token without printing it.**
+
+```python
+import os
+from getpass import getpass
+
+os.environ["SYNAPSE_AUTH_TOKEN"] = getpass("Synapse personal access token: ")
+```
+
+**4. Bash cell — create the EUR/EAS manifest in Drive.**
 
 ```bash
 %%bash
@@ -67,6 +103,13 @@ are setup/runtime operations, not review checks.
 First create and review the plan without downloading:
 
 ```bash
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+cd "${CODE_ROOT}"
+
 python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
   --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
@@ -77,6 +120,13 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
 Then download, validate, and process all batches. The default batch size is 10.
 
 ```bash
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+cd "${CODE_ROOT}"
+
 python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
   --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \

@@ -9,6 +9,7 @@ data-setup environment.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
 import hashlib
 import importlib.util
@@ -79,22 +80,31 @@ def metadata_from_parent(parent_id: str, token: str, ancestry: str = "") -> list
     if importlib.util.find_spec("synapseclient") is None:
         raise RuntimeError("synapseclient is required for --synapse-parent-id; install it during the user-run setup phase.")
     import synapseclient
+    from synapseclient.api import get_children, get_entity
+    from synapseclient.api.file_services import get_file_handle_for_download_async
 
     syn = synapseclient.Synapse()
     syn.login(authToken=token or None, silent=not bool(token))
-    rows = []
-    for child in syn.getChildren(parent_id, includeTypes=["file"]):
-        entity = syn.restGET(f"/repo/v1/entity/{child['id']}")
-        handle_id = entity.get("dataFileHandleId")
-        if not handle_id:
-            continue
-        handle = syn.restGET(f"/file/v1/fileHandle/{handle_id}")
-        rows.append(normalize_metadata({
-            "id": child["id"], "name": child["name"], "contentSize": str(handle.get("contentSize", "")),
-            "contentMd5": handle.get("contentMd5", ""), "contentSha256": handle.get("contentSha256", ""),
-            "ancestry": ancestry, "synapse_parent_id": parent_id,
-        }))
-    return rows
+
+    async def collect_metadata() -> list[dict[str, str]]:
+        rows = []
+        async for child in get_children(parent=parent_id, include_types=["file"], synapse_client=syn):
+            entity = await get_entity(child["id"], synapse_client=syn)
+            handle_id = entity.get("dataFileHandleId")
+            if not handle_id:
+                continue
+            download_info = await get_file_handle_for_download_async(
+                str(handle_id), child["id"], synapse_client=syn,
+            )
+            handle = download_info.get("fileHandle", {})
+            rows.append(normalize_metadata({
+                "id": child["id"], "name": child["name"], "contentSize": str(handle.get("contentSize", "")),
+                "contentMd5": handle.get("contentMd5", ""), "contentSha256": handle.get("contentSha256", ""),
+                "ancestry": ancestry, "synapse_parent_id": parent_id,
+            }))
+        return rows
+
+    return asyncio.run(collect_metadata())
 
 
 def parse_parent_spec(value: str) -> tuple[str, str]:
