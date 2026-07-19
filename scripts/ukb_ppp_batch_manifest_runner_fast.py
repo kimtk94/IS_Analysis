@@ -302,10 +302,22 @@ def main() -> None:
     if selected_batches.empty:
         raise SystemExit("[ERROR] No batches selected")
     write_atomic(batch_df, manifest_path)
+    progress_path = qc_dir / "batch_progress.tsv"
+    progress_rows: list[dict[str, str]] = []
 
-    for index, batch in selected_batches.iterrows():
+    def record_progress(batch_id: str, number: int, phase: str, detail: str = "") -> None:
+        progress_rows.append({
+            "timestamp": now(), "batch_id": batch_id, "batch_number": str(number),
+            "batch_total": str(len(selected_batches)), "phase": phase, "detail": detail,
+        })
+        write_atomic(pd.DataFrame(progress_rows), progress_path)
+
+    for position, (index, batch) in enumerate(selected_batches.iterrows(), start=1):
         batch_id, batch_genes = str(batch.batch_id), str(batch.genes).split(",")
-        print(f"\n===== {batch_id}: {len(batch_genes)} genes =====")
+        print(f"\n===== Batch {position}/{len(selected_batches)}: {batch_id} ({len(batch_genes)} genes) =====")
+        batch_df.loc[index, "status"] = "running"
+        write_atomic(batch_df, manifest_path)
+        record_progress(batch_id, position, "started", f"{len(batch_genes)} genes")
         source_rows: list[dict[str, str]] = []
         if download_manifest is not None:
             selected = download_manifest[download_manifest["gene_symbol"].isin(batch_genes)]
@@ -319,15 +331,18 @@ def main() -> None:
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
         download_failed = False
         if args.run and download_manifest is not None:
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: looking up selected Synapse metadata")
             try:
                 source_rows = hydrate_selected_synapse_metadata(source_rows, download_manifest, Path(args.download_manifest))
             except (RuntimeError, ValueError, OSError) as error:
                 batch_df.loc[index, "status"] = "metadata_fetch_failed"
                 write_atomic(batch_df, manifest_path)
+                record_progress(batch_id, position, "metadata_fetch_failed", str(error))
                 print(f"[ERROR] {batch_id} Synapse metadata lookup failed: {error}")
                 if args.stop_on_error:
                     raise SystemExit(f"[ERROR] {batch_id} metadata lookup failed")
                 continue
+        print(f"[INFO] Batch {position}/{len(selected_batches)}: verifying {len(source_rows)} source archives")
         for source in source_rows:
             ancestry, gene = source["ancestry"], source["gene_symbol"]
             destination = base / ancestry / source["source_file"] if source["source_file"] else base / ancestry
@@ -352,12 +367,14 @@ def main() -> None:
         if download_failed:
             batch_df.loc[index, "status"] = "download_or_verification_failed"
             write_atomic(batch_df, manifest_path)
+            record_progress(batch_id, position, "download_or_verification_failed", str(download_audit))
             if args.stop_on_error:
                 raise SystemExit(f"[ERROR] {batch_id} download/verification failed; see {download_audit}")
             continue
         if not args.run or args.download_only:
             batch_df.loc[index, "status"] = "download_verified" if args.run else "planned"
             write_atomic(batch_df, manifest_path)
+            record_progress(batch_id, position, str(batch_df.loc[index, "status"]), str(download_audit))
             continue
 
         gene_file = qc_dir / "gene_batches" / f"{batch_id}.txt"
@@ -365,6 +382,7 @@ def main() -> None:
         gene_file.write_text("\n".join(batch_genes) + "\n", encoding="utf-8")
         failed = False
         for ancestry in ANCESTRIES:
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: processing {ancestry}")
             output = outdir / ancestry / f"exposure_{batch_id}.tsv"
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
@@ -394,10 +412,12 @@ def main() -> None:
             batch_df.loc[index, "status"] = "completed"
             batch_df.loc[index, "raw_cleanup"] = "retained_flag_not_set"
         write_atomic(batch_df, manifest_path)
+        record_progress(batch_id, position, str(batch_df.loc[index, "status"]), str(batch_df.loc[index, "raw_cleanup"]))
         if failed and args.stop_on_error:
             raise SystemExit(f"[ERROR] {batch_id} processing failed")
 
     print(f"[INFO] Batch manifest: {manifest_path}")
+    print(f"[INFO] Batch progress: {progress_path}")
 
 
 if __name__ == "__main__":

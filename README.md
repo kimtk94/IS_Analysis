@@ -158,6 +158,8 @@ incomplete, the archive is retained and the batch is marked
 - Canonical filtered results: `results/exposure_batches/EUR/exposure_batch_###.tsv`
   and `results/exposure_batches/EAS/exposure_batch_###.tsv`
 - Batch state: `results/qc/batch_pipeline/batch_manifest.tsv`
+- Run progress: `results/qc/batch_pipeline/batch_progress.tsv` (batch number,
+  current phase, and terminal status)
 - Per-batch download/verification evidence:
   `results/qc/batch_pipeline/downloads/batch_###.tsv`
 - Raw deletion/retention evidence (when cleanup is requested):
