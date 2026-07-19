@@ -53,7 +53,6 @@ echo "[TEST] Build manifest from committed Synapse metadata fixture"
 MANIFEST_FIXTURE_OUTPUT="${SMOKE_ROOT}/ukb_ppp_download_manifest.tsv"
 mkdir -p "${SMOKE_ROOT}"
 "${PYTHON_BIN}" scripts/build_ukb_ppp_download_manifest.py \
-  --targets tests/fixtures/synapse_manifest_targets.tsv \
   --synapse-metadata-file tests/fixtures/synapse_metadata.tsv \
   --output "${MANIFEST_FIXTURE_OUTPUT}"
 "${PYTHON_BIN}" - "${MANIFEST_FIXTURE_OUTPUT}" <<'PY'
@@ -65,6 +64,7 @@ with open(sys.argv[1], newline="", encoding="utf-8") as handle:
 assert [row["synapse_id"] for row in rows] == ["syn1001", "syn1002"]
 assert [row["expected_size_bytes"] for row in rows] == ["123456", "234567"]
 assert [row["ancestry"] for row in rows] == ["EUR", "EAS"]
+assert [row["synapse_parent_id"] for row in rows] == ["syn51365303", "syn51365306"]
 assert all(row["url"].startswith("https://www.synapse.org/Synapse:syn") for row in rows)
 print("[OK] Synapse metadata manifest fixture")
 PY

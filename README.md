@@ -7,19 +7,16 @@ writes EUR and EAS outputs separately.
 
 ## Real-data batch workflow
 
-Run this in the Colab/Drive data-setup environment, not during PR review. Create
-a tab-separated download manifest with one row per source archive:
+Clone the code in Colab if desired, but mount Drive and run all data, manifests,
+downloads, and outputs under `/content/drive/MyDrive/IS_Analysis_V2/`. Do not
+use the ephemeral Colab clone as the data workspace.
 
-```tsv
-ancestry	gene_symbol	source_file	url	expected_size_bytes	sha256
-EUR	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eur.tar		
-EAS	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eas.tar		
-```
-
-`ancestry`, `gene_symbol`, `source_file`, and `url` are required. `expected_size_bytes`,
-`sha256`, and `md5` are optional but strongly recommended when the source provides
-them. A `synapse_id` column makes the runner download through `synapseclient`
-rather than treating the human-readable Synapse URL as a direct archive URL.
+The manifest is generated from explicit Synapse parent folders; do not type gene
+symbols or archive rows manually. It contains `ancestry`, the gene symbol inferred
+from the archive filename, source URL/ID, the explicit `synapse_parent_id`, and
+available size/checksum metadata. A `synapse_id` column makes the runner download
+through `synapseclient` rather than treating the human-readable Synapse URL as a
+direct archive URL.
 Every selected gene must have at least one EUR and one EAS row; genes without a
 pair are intentionally excluded. This TSV is also the **raw-data lifecycle
 manifest**: when cleanup is enabled, the runner writes `pipeline_batch_id`,
@@ -28,44 +25,47 @@ file. Keep it on Drive and do not delete or replace it while a run is active.
 
 ### Build the manifest from Synapse metadata
 
-Do not manually fill archive sizes or hashes. Start with a small target TSV that
-contains `ancestry`, `gene_symbol`, and `source_file` (and `synapse_id` when two
-Synapse files have the same name). In the data-setup environment, build the
-download manifest directly from the configured UKB-PPP **EUR** (`syn51365303`)
-and **EAS** (`syn51365306`) folders' file-handle metadata. The target TSV
-controls which of those folders are queried:
+Do not manually fill archive sizes, hashes, or genes. In the data-setup
+environment, explicitly provide the UKB-PPP **EUR** and **EAS** parent folders;
+the builder enumerates their `.tar` files and derives the gene symbol from the
+filename:
 
 ```bash
 export SYNAPSE_AUTH_TOKEN='your-personal-access-token'
-python3 scripts/build_ukb_ppp_download_manifest.py \
-  --targets data/metadata/ukb_ppp_targets.tsv \
-  --ukb-ppp-ancestry-folders \
-  --output data/metadata/ukb_ppp_download_manifest.tsv
+CODE_ROOT=/content/IS_Analysis
+WORK_ROOT=/content/drive/MyDrive/IS_Analysis_V2
+mkdir -p "${WORK_ROOT}/data/metadata"
+python3 "${CODE_ROOT}/scripts/build_ukb_ppp_download_manifest.py" \
+  --synapse-parent EUR:syn51365303 \
+  --synapse-parent EAS:syn51365306 \
+  --output "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
 ```
 
 This records each file's Synapse ID, canonical Synapse URL, byte size, and MD5
 without downloading the archive. For a reproducible or offline review, export
-the folder metadata from Synapse and substitute `--synapse-metadata-file` for
-`--ukb-ppp-ancestry-folders`. The script accepts the usual Synapse field names
-(`id`, `name`, `dataFileSizeBytes`, `contentMd5`) and writes the runner-ready
-manifest. The builder also contains the provided AFR, CSA, MID, COMBINED, and
-AMR folder mappings for future target manifests, but the EUR/EAS batch runner
-only processes EUR/EAS. The folder-query and subsequent downloads require
-`synapseclient` and Synapse authentication; they are setup/runtime operations,
-not review checks.
+the folder metadata from Synapse and use `--synapse-metadata-file`; exported
+rows must contain an ancestry and `synapse_parent_id`. The folder-query and
+subsequent downloads require `synapseclient` and Synapse authentication; they
+are setup/runtime operations, not review checks.
 
 First create and review the plan without downloading:
 
 ```bash
-python3 scripts/ukb_ppp_batch_manifest_runner_fast.py \
-  --download-manifest data/metadata/ukb_ppp_download_manifest.tsv
+python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
+  --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
 ```
 
 Then download, validate, and process all batches. The default batch size is 10.
 
 ```bash
-python3 scripts/ukb_ppp_batch_manifest_runner_fast.py \
-  --download-manifest data/metadata/ukb_ppp_download_manifest.tsv \
+python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
+  --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --batch-size 10 \
   --p-threshold 5e-8 \
   --run \
