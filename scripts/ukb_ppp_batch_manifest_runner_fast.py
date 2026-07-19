@@ -166,7 +166,6 @@ def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, exist
             try:
                 shutil.copy2(candidate, temporary)
                 os.replace(temporary, destination)
-                print(f"[INFO] Symlink unsupported; copied existing raw archive for staging: {candidate.name}", flush=True)
             except OSError:
                 temporary.unlink(missing_ok=True)
                 raise error
@@ -331,10 +330,15 @@ def download_one(row: dict[str, str], destination: Path) -> tuple[bool, str]:
         if importlib.util.find_spec("synapseclient") is None:
             return False, "synapseclient_not_installed"
         import synapseclient
+        from synapseclient.operations import FileOptions, get
         try:
             syn = synapseclient.Synapse()
             syn.login(authToken=os.environ.get("SYNAPSE_AUTH_TOKEN") or None, silent=not bool(os.environ.get("SYNAPSE_AUTH_TOKEN")))
-            downloaded = Path(syn.get(synapse_id, downloadLocation=str(destination.parent), ifcollision="overwrite.local").path)
+            downloaded = Path(get(
+                synapse_id=synapse_id,
+                file_options=FileOptions(download_location=str(destination.parent), if_collision="overwrite.local"),
+                synapse_client=syn,
+            ).path)
             if downloaded.resolve() != destination.resolve():
                 os.replace(downloaded, destination)
             return True, "downloaded_from_synapse"
@@ -468,13 +472,11 @@ def main() -> None:
     preview = ", ".join(selected_ids[:10])
     suffix = "" if len(selected_ids) <= 10 else f", ... (+{len(selected_ids) - 10} more)"
     print(f"[INFO] Batches selected for this run: {preview}{suffix}", flush=True)
-    print("[INFO] Execution batch plan:", flush=True)
-    for position, (_, batch) in enumerate(selected_batches.iterrows(), start=1):
-        print(
-            f"[PLAN] {position}/{len(selected_batches)} {batch['batch_id']}: "
-            f"{batch['n_genes']} genes ({batch['genes']})",
-            flush=True,
-        )
+    execution_plan_path = qc_dir / "execution_plan.tsv"
+    execution_plan = selected_batches.copy()
+    execution_plan.insert(0, "execution_position", range(1, len(execution_plan) + 1))
+    write_atomic(execution_plan, execution_plan_path)
+    print(f"[INFO] Full execution plan: {execution_plan_path}", flush=True)
     write_atomic(batch_df, manifest_path)
     progress_path = qc_dir / "batch_progress.tsv"
     progress_rows: list[dict[str, str]] = []
@@ -509,7 +511,9 @@ def main() -> None:
             print(f"[INFO] Batch {position}/{len(selected_batches)}: checking {len(source_rows)} source archive(s) in existing raw base", flush=True)
             staged_existing = stage_existing_raw_archives(source_rows, base, existing_raw_base)
             if staged_existing:
-                print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {len(staged_existing)} validated archive(s) from {existing_raw_base}", flush=True)
+                copied = sum(not Path(path).is_symlink() for path in staged_existing)
+                copy_detail = f"; copied={copied} because symlinks are unsupported" if copied else ""
+                print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {len(staged_existing)} validated archive(s) from {existing_raw_base}{copy_detail}", flush=True)
             else:
                 print(f"[INFO] Batch {position}/{len(selected_batches)}: no new valid existing archives staged; missing sources will use normal download handling", flush=True)
             record_progress(batch_id, position, "existing_raw_checked", f"staged={len(staged_existing)} of {len(source_rows)}")
