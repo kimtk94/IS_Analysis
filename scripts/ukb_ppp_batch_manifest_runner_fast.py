@@ -174,6 +174,31 @@ def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, exist
     return staged
 
 
+def prioritize_existing_raw_batches(batches: Any, manifest: Any, existing_base: Path, pd: Any) -> Any:
+    """Run batches backed by a separate raw-data root before download-only batches."""
+    coverage = []
+    for number, (index, batch) in enumerate(batches.iterrows(), start=1):
+        genes = str(batch["genes"]).split(",")
+        sources = manifest[manifest["gene_symbol"].isin(genes)]
+        available = 0
+        for row in sources.to_dict("records"):
+            path = existing_base / row["ancestry"] / row["source_file"]
+            if path.exists() and path.stat().st_size > 0 and tarfile.is_tarfile(path):
+                available += 1
+        coverage.append({"index": index, "existing_raw_sources": available, "source_count": len(sources)})
+        if number % 100 == 0 or number == len(batches):
+            print(f"[INFO] Existing raw batch scan: {number}/{len(batches)}", flush=True)
+    coverage_df = pd.DataFrame(coverage).set_index("index")
+    ranked = batches.join(coverage_df)
+    ranked = ranked.sort_values(
+        ["existing_raw_sources", "source_count", "batch_id"], ascending=[False, False, True], kind="stable",
+    )
+    reusable = int((ranked["existing_raw_sources"] > 0).sum())
+    complete = int((ranked["existing_raw_sources"] == ranked["source_count"]).sum())
+    print(f"[INFO] Existing raw priority: {complete} fully available, {reusable} partially/fully available batches first", flush=True)
+    return ranked.drop(columns=["existing_raw_sources", "source_count"])
+
+
 def restore_batch_state(batch_df: Any, manifest_path: Path, pd: Any) -> Any:
     """Carry terminal state forward so a restarted run does not repeat batches."""
     if not manifest_path.exists():
@@ -408,6 +433,8 @@ def main() -> None:
         if skipped:
             print(f"[INFO] Skipping {skipped} completed batch(es); use --rerun-completed to override", flush=True)
         selected_batches = selected_batches[~completed].copy()
+    if existing_raw_base is not None and download_manifest is not None:
+        selected_batches = prioritize_existing_raw_batches(selected_batches, download_manifest, existing_raw_base, pd)
     if args.max_batches is not None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:

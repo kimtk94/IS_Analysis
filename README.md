@@ -171,6 +171,12 @@ or invalid in `--existing-raw-base`, the runner follows the normal Synapse
 metadata/download path for that file. This means existing raw data and newly
 downloaded data can be mixed safely within the same 10-gene batch.
 
+When `--existing-raw-base` is supplied, the runner scans that location before
+starting work and reorders unfinished batches: batches with all available raw
+sources run first, followed by batches with some available sources, then batches
+that require downloads. This lets existing raw data be consumed and cleaned in
+10-gene units before new Synapse downloads begin.
+
 With `--delete-raw-after-processing`, the default cleanup removes only the
 staging symlink and preserves the separate original. To delete the separate
 original as well after its 10-gene batch is successfully processed, explicitly
