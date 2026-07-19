@@ -162,6 +162,18 @@ data are in the Colab clone but run outputs/staging are in Drive:
 --existing-raw-base "${CODE_ROOT}/data/rawdata/pqtl/selected_targets"
 ```
 
+This check happens at the start of every selected batch. If an archive is absent
+or invalid in `--existing-raw-base`, the runner follows the normal Synapse
+metadata/download path for that file. This means existing raw data and newly
+downloaded data can be mixed safely within the same 10-gene batch.
+
+With `--delete-raw-after-processing`, the default cleanup removes only the
+staging symlink and preserves the separate original. To delete the separate
+original as well after its 10-gene batch is successfully processed, explicitly
+add `--delete-existing-raw-after-processing`. That option requires both
+`--existing-raw-base` and `--delete-raw-after-processing` and records the source
+deletion in the batch cleanup evidence.
+
 Keep `--download-manifest` when lifecycle tracking or raw cleanup is required;
 the manifest source filename must match the existing archive filename. Without a
 manifest, the runner can discover paired EUR/EAS raw archives, but cannot use

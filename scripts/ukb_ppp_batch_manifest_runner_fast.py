@@ -137,13 +137,13 @@ def hydrate_selected_synapse_metadata(
     return sources
 
 
-def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, existing_base: Path) -> int:
+def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, existing_base: Path) -> dict[str, Path]:
     """Link valid archives from a separate existing-data root into this run's base.
 
     A symlink lets the runner process and later clean its staging path without
     deleting the original archive in ``existing_base``.
     """
-    staged = 0
+    staged: dict[str, Path] = {}
     for source in sources:
         source_file = source.get("source_file", "")
         ancestry = source.get("ancestry", "")
@@ -160,7 +160,7 @@ def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, exist
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.symlink_to(candidate.resolve())
-        staged += 1
+        staged[str(destination)] = candidate
     return staged
 
 
@@ -219,7 +219,7 @@ def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, s
     for row in cleanup_rows:
         source_file = Path(row["raw_file"]).name
         mask = (manifest["ancestry"] == row["ancestry"]) & (manifest["source_file"] == source_file)
-        lifecycle = "deleted_after_processed" if row["action"] == "deleted" else "retained_after_processing"
+        lifecycle = "deleted_after_processed" if row["action"] in {"deleted", "deleted_existing_source"} else "retained_after_processing"
         manifest.loc[mask, "pipeline_batch_id"] = batch_id
         manifest.loc[mask, "raw_lifecycle"] = lifecycle
         manifest.loc[mask, "raw_cleanup_at"] = now()
@@ -338,6 +338,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
     parser.add_argument("--existing-raw-base", help="Optional separate raw archive root to validate and symlink into --base per batch.")
+    parser.add_argument("--delete-existing-raw-after-processing", action="store_true", help="Delete staged originals in --existing-raw-base only after successful processing and staging cleanup.")
     parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256, md5, synapse_id.")
     parser.add_argument("--outdir", default="results/exposure_batches")
     parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
@@ -365,6 +366,8 @@ def main() -> None:
         raise SystemExit("[ERROR] --batch-size must be positive")
     if args.delete_raw_after_processing and not args.download_manifest:
         raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
+    if args.delete_existing_raw_after_processing and (not args.existing_raw_base or not args.delete_raw_after_processing):
+        raise SystemExit("[ERROR] --delete-existing-raw-after-processing requires --existing-raw-base and --delete-raw-after-processing")
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
     existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
@@ -429,10 +432,11 @@ def main() -> None:
                 for ancestry in ANCESTRIES:
                     source_rows.append({"gene_symbol": gene, "ancestry": ancestry, "source_file": "", "url": ""})
 
+        staged_existing: dict[str, Path] = {}
         if existing_raw_base is not None:
-            staged = stage_existing_raw_archives(source_rows, base, existing_raw_base)
-            if staged:
-                print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {staged} validated archive(s) from {existing_raw_base}", flush=True)
+            staged_existing = stage_existing_raw_archives(source_rows, base, existing_raw_base)
+            if staged_existing:
+                print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {len(staged_existing)} validated archive(s) from {existing_raw_base}", flush=True)
 
         audit_rows = []
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
@@ -508,11 +512,27 @@ def main() -> None:
                 status_path = outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv"
                 for row in remove_raw_files(raw_files_by_ancestry[ancestry], status_path):
                     cleanup_rows.append({"batch_id": batch_id, "ancestry": ancestry, **row})
+            if args.delete_existing_raw_after_processing:
+                for row in list(cleanup_rows):
+                    original = staged_existing.get(row["raw_file"])
+                    if row["action"] != "deleted" or original is None:
+                        continue
+                    try:
+                        original.unlink()
+                        cleanup_rows.append({
+                            "batch_id": batch_id, "ancestry": row["ancestry"], "raw_file": str(original), "action": "deleted_existing_source",
+                            "reason": "staged_source_processed",
+                        })
+                    except OSError as error:
+                        cleanup_rows.append({
+                            "batch_id": batch_id, "ancestry": row["ancestry"], "raw_file": str(original), "action": "delete_existing_source_failed",
+                            "reason": str(error),
+                        })
             cleanup_path = qc_dir / "raw_cleanup" / f"{batch_id}.tsv"
             write_atomic(pd.DataFrame(cleanup_rows), cleanup_path)
             record_raw_cleanup_in_manifest(download_manifest, cleanup_rows, batch_id)
             write_atomic(download_manifest, Path(args.download_manifest))
-            cleanup_failed = any(row["action"] != "deleted" for row in cleanup_rows)
+            cleanup_failed = any(row["action"] not in {"deleted", "deleted_existing_source"} for row in cleanup_rows)
             batch_df.loc[index, "status"] = "completed_raw_retained" if cleanup_failed else "completed_raw_deleted"
             batch_df.loc[index, "raw_cleanup"] = str(cleanup_path)
         else:
