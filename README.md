@@ -7,9 +7,10 @@ writes EUR and EAS outputs separately.
 
 ## Real-data batch workflow
 
-Clone the code in Colab if desired, but mount Drive and run all data, manifests,
-downloads, and outputs under `/content/drive/MyDrive/IS_Analysis_V2/`. Do not
-use the ephemeral Colab clone as the data workspace.
+Run the production workflow in Google Colab. Clone code to
+`/content/IS_Analysis_V2`, mount Drive, and run all data, manifests, downloads,
+and outputs under `/content/drive/MyDrive/IS_Analysis_V2/`. Do not use the
+ephemeral Colab clone as the data workspace.
 
 The manifest is generated from explicit Synapse parent folders; do not type gene
 symbols or archive rows manually. It contains `ancestry`, the gene symbol inferred
@@ -31,14 +32,29 @@ the builder enumerates their `.tar` files and derives the gene symbol from the
 filename:
 
 ```bash
-export SYNAPSE_AUTH_TOKEN='your-personal-access-token'
-CODE_ROOT=/content/IS_Analysis
-WORK_ROOT=/content/drive/MyDrive/IS_Analysis_V2
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+SCRIPT="${CODE_ROOT}/scripts/build_ukb_ppp_download_manifest.py"
+
+if [[ ! -f "${SCRIPT}" ]]; then
+  echo "[ERROR] 스크립트를 찾을 수 없습니다: ${SCRIPT}" >&2
+  echo "먼저 GitHub 저장소가 ${CODE_ROOT}에 clone되었는지 확인하세요." >&2
+  exit 1
+fi
+
+: "${SYNAPSE_AUTH_TOKEN:?SYNAPSE_AUTH_TOKEN을 먼저 설정하세요.}"
 mkdir -p "${WORK_ROOT}/data/metadata"
-python3 "${CODE_ROOT}/scripts/build_ukb_ppp_download_manifest.py" \
-  --synapse-parent EUR:syn51365303 \
-  --synapse-parent EAS:syn51365306 \
+
+python3 "${SCRIPT}" \
+  --synapse-parent "EUR:syn51365303" \
+  --synapse-parent "EAS:syn51365306" \
   --output "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
+
+echo "[DONE] Manifest 생성 완료"
+echo "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
 ```
 
 This records each file's Synapse ID, canonical Synapse URL, byte size, and MD5
