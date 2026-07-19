@@ -278,6 +278,7 @@ def main() -> None:
         raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    qc_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = qc_dir / "batch_manifest.tsv"
     download_manifest = read_download_manifest(Path(args.download_manifest), pd) if args.download_manifest else None
     raw_audit = scan_valid(base, pd)
