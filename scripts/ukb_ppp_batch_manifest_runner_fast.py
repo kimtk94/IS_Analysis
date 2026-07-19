@@ -25,6 +25,8 @@ from typing import Any
 
 ANCESTRIES = ("EUR", "EAS")
 REQUIRED_DOWNLOAD_COLUMNS = {"ancestry", "gene_symbol", "source_file", "url"}
+COMPLETED_BATCH_STATUSES = {"completed", "completed_raw_deleted", "completed_raw_retained"}
+RESTART_CLEANUP_STATUSES = {"running", "metadata_fetch_failed", "download_or_verification_failed", "processing_failed"}
 
 
 def now() -> str:
@@ -94,6 +96,83 @@ def read_download_manifest(path: Path, pd: Any) -> Any:
     return manifest
 
 
+def hydrate_selected_synapse_metadata(
+    sources: list[dict[str, str]], manifest: Any, manifest_path: Path,
+) -> list[dict[str, str]]:
+    """Look up checksums only for the current batch's Synapse source files."""
+    pending = [
+        row["synapse_id"] for row in sources
+        if row.get("synapse_id", "") and (not row.get("expected_size_bytes", "") or not row.get("md5", ""))
+    ]
+    if not pending:
+        return sources
+    from synapse_metadata import fetch_file_metadata_many, synapse_token
+
+    def progress(completed: int, total: int) -> None:
+        print(f"[INFO] Synapse metadata: {completed}/{total} files", flush=True)
+
+    metadata = fetch_file_metadata_many(pending, token=synapse_token(), max_concurrency=8, progress=progress)
+    for source in sources:
+        details = metadata.get(source.get("synapse_id", ""))
+        if not details:
+            continue
+        source.update(details)
+        mask = manifest["synapse_id"].eq(source["synapse_id"])
+        for column, value in details.items():
+            if column not in manifest.columns:
+                manifest[column] = ""
+            manifest.loc[mask, column] = value
+    write_atomic(manifest, manifest_path)
+    return sources
+
+
+def restore_batch_state(batch_df: Any, manifest_path: Path, pd: Any) -> Any:
+    """Carry terminal state forward so a restarted run does not repeat batches."""
+    if not manifest_path.exists():
+        return batch_df
+    previous = pd.read_csv(manifest_path, sep="\t", dtype=str).fillna("")
+    if not {"batch_id", "genes", "status"}.issubset(previous.columns):
+        print(f"[WARN] Ignoring incompatible existing batch manifest: {manifest_path}")
+        return batch_df
+    previous = previous.drop_duplicates("batch_id", keep="last").set_index("batch_id")
+    for index, row in batch_df.iterrows():
+        batch_id = row["batch_id"]
+        if batch_id not in previous.index or previous.at[batch_id, "genes"] != row["genes"]:
+            continue
+        for column in ("status", "raw_cleanup"):
+            if column in previous.columns:
+                batch_df.loc[index, column] = previous.at[batch_id, column]
+    return batch_df
+
+
+def print_batch_state(batch_df: Any, label: str) -> None:
+    """Print a compact checkpoint summary suitable for Colab stdout."""
+    counts = batch_df["status"].value_counts().sort_index()
+    summary = ", ".join(f"{status}={count}" for status, count in counts.items())
+    print(f"[INFO] {label}: {len(batch_df)} batches ({summary})", flush=True)
+
+
+def clean_incomplete_batch_outputs(batch_id: str, outdir: Path, qc_dir: Path, pd: Any) -> None:
+    """Remove stale derived outputs before retrying an interrupted batch.
+
+    Verified raw archives are retained as input evidence and can be reused.
+    """
+    candidates = []
+    for ancestry in ANCESTRIES:
+        candidates.extend([
+            outdir / ancestry / f"exposure_{batch_id}.tsv",
+            outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv",
+        ])
+    rows = []
+    for path in candidates:
+        if path.exists():
+            path.unlink()
+            rows.append({"path": str(path), "action": "deleted_stale_derived_output"})
+    cleanup_path = qc_dir / "partial_cleanup" / f"{batch_id}.tsv"
+    write_atomic(pd.DataFrame(rows, columns=["path", "action"]), cleanup_path)
+    print(f"[INFO] Reset incomplete derived outputs for {batch_id}; retained verified raw archives", flush=True)
+
+
 def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
     """Persist the raw lifecycle state in the source manifest before continuing."""
     for column in ("pipeline_batch_id", "raw_lifecycle", "raw_cleanup_at", "raw_cleanup_reason"):
@@ -122,7 +201,7 @@ def paired_genes_from_raw(audit: Any) -> list[str]:
     return sorted(gene for gene, ancestries in groups.items() if set(ANCESTRIES).issubset(ancestries))
 
 
-def verify_archive(path: Path, expected_size: str, expected_sha256: str) -> tuple[bool, str, str]:
+def verify_archive(path: Path, expected_size: str, expected_sha256: str, expected_md5: str = "") -> tuple[bool, str, str]:
     if not path.exists() or path.stat().st_size == 0:
         return False, "missing_or_empty", ""
     if expected_size:
@@ -141,6 +220,13 @@ def verify_archive(path: Path, expected_size: str, expected_sha256: str) -> tupl
     observed_sha256 = sha256_file(path) if expected_sha256 else ""
     if expected_sha256 and observed_sha256.lower() != expected_sha256.lower():
         return False, "sha256_mismatch", observed_sha256
+    if expected_md5:
+        digest = hashlib.md5(usedforsecurity=False)
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest().lower() != expected_md5.lower():
+            return False, "md5_mismatch", observed_sha256
     return True, "verified", observed_sha256
 
 
@@ -149,6 +235,20 @@ def download_one(row: dict[str, str], destination: Path) -> tuple[bool, str]:
     completed = destination.exists() and ".part" not in destination.name
     if completed:
         return True, "already_present"
+    synapse_id = row.get("synapse_id", "").strip()
+    if synapse_id:
+        if importlib.util.find_spec("synapseclient") is None:
+            return False, "synapseclient_not_installed"
+        import synapseclient
+        try:
+            syn = synapseclient.Synapse()
+            syn.login(authToken=os.environ.get("SYNAPSE_AUTH_TOKEN") or None, silent=not bool(os.environ.get("SYNAPSE_AUTH_TOKEN")))
+            downloaded = Path(syn.get(synapse_id, downloadLocation=str(destination.parent), ifcollision="overwrite.local").path)
+            if downloaded.resolve() != destination.resolve():
+                os.replace(downloaded, destination)
+            return True, "downloaded_from_synapse"
+        except Exception as error:  # Synapse client errors vary by version and authentication state.
+            return False, f"synapse_download_failed: {str(error).replace(chr(10), ' ')[:500]}"
     curl = shutil.which("curl")
     if not curl:
         return False, "curl_not_found"
@@ -199,12 +299,13 @@ def remove_raw_files(raw_files: list[Path], status_path: Path) -> list[dict[str,
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
-    parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256.")
+    parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256, md5, synapse_id.")
     parser.add_argument("--outdir", default="results/exposure_batches")
     parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--only-batch", help="Comma-separated batch IDs, e.g. batch_001,batch_002.")
     parser.add_argument("--max-batches", type=int)
+    parser.add_argument("--rerun-completed", action="store_true", help="Run batches marked completed in an existing batch manifest.")
     parser.add_argument("--p-threshold", default="5e-8")
     parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
     parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
@@ -227,6 +328,7 @@ def main() -> None:
         raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    qc_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = qc_dir / "batch_manifest.tsv"
     download_manifest = read_download_manifest(Path(args.download_manifest), pd) if args.download_manifest else None
     raw_audit = scan_valid(base, pd)
@@ -241,19 +343,43 @@ def main() -> None:
         batch_id = f"batch_{offset // args.batch_size + 1:03d}"
         rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", "raw_cleanup": "not_requested", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
     batch_df = pd.DataFrame(rows)
+    batch_df = restore_batch_state(batch_df, manifest_path, pd)
+    print_batch_state(batch_df, "Current batch state")
     selected_batches = batch_df
     if args.only_batch:
         wanted = {value.strip() for value in args.only_batch.split(",") if value.strip()}
         selected_batches = batch_df[batch_df["batch_id"].isin(wanted)].copy()
+    if args.run and not args.rerun_completed:
+        completed = selected_batches["status"].isin(COMPLETED_BATCH_STATUSES)
+        skipped = int(completed.sum())
+        if skipped:
+            print(f"[INFO] Skipping {skipped} completed batch(es); use --rerun-completed to override", flush=True)
+        selected_batches = selected_batches[~completed].copy()
     if args.max_batches is not None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:
         raise SystemExit("[ERROR] No batches selected")
+    print(f"[INFO] Batches selected for this run: {', '.join(selected_batches['batch_id'].tolist())}", flush=True)
     write_atomic(batch_df, manifest_path)
+    progress_path = qc_dir / "batch_progress.tsv"
+    progress_rows: list[dict[str, str]] = []
 
-    for index, batch in selected_batches.iterrows():
+    def record_progress(batch_id: str, number: int, phase: str, detail: str = "") -> None:
+        progress_rows.append({
+            "timestamp": now(), "batch_id": batch_id, "batch_number": str(number),
+            "batch_total": str(len(selected_batches)), "phase": phase, "detail": detail,
+        })
+        write_atomic(pd.DataFrame(progress_rows), progress_path)
+
+    for position, (index, batch) in enumerate(selected_batches.iterrows(), start=1):
         batch_id, batch_genes = str(batch.batch_id), str(batch.genes).split(",")
-        print(f"\n===== {batch_id}: {len(batch_genes)} genes =====")
+        previous_status = str(batch_df.loc[index, "status"])
+        print(f"\n===== Batch {position}/{len(selected_batches)}: {batch_id} ({len(batch_genes)} genes; previous={previous_status}) =====", flush=True)
+        if args.run and previous_status in RESTART_CLEANUP_STATUSES:
+            clean_incomplete_batch_outputs(batch_id, outdir, qc_dir, pd)
+        batch_df.loc[index, "status"] = "running"
+        write_atomic(batch_df, manifest_path)
+        record_progress(batch_id, position, "started", f"{len(batch_genes)} genes")
         source_rows: list[dict[str, str]] = []
         if download_manifest is not None:
             selected = download_manifest[download_manifest["gene_symbol"].isin(batch_genes)]
@@ -266,6 +392,19 @@ def main() -> None:
         audit_rows = []
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}
         download_failed = False
+        if args.run and download_manifest is not None:
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: looking up selected Synapse metadata", flush=True)
+            try:
+                source_rows = hydrate_selected_synapse_metadata(source_rows, download_manifest, Path(args.download_manifest))
+            except (RuntimeError, ValueError, OSError) as error:
+                batch_df.loc[index, "status"] = "metadata_fetch_failed"
+                write_atomic(batch_df, manifest_path)
+                record_progress(batch_id, position, "metadata_fetch_failed", str(error))
+                print(f"[ERROR] {batch_id} Synapse metadata lookup failed: {error}", flush=True)
+                if args.stop_on_error:
+                    raise SystemExit(f"[ERROR] {batch_id} metadata lookup failed")
+                continue
+        print(f"[INFO] Batch {position}/{len(selected_batches)}: verifying {len(source_rows)} source archives", flush=True)
         for source in source_rows:
             ancestry, gene = source["ancestry"], source["gene_symbol"]
             destination = base / ancestry / source["source_file"] if source["source_file"] else base / ancestry
@@ -277,7 +416,7 @@ def main() -> None:
                     download_failed = True
             if source["source_file"]:
                 raw_files_by_ancestry[ancestry].append(destination)
-                ok, verification, observed_sha = verify_archive(destination, source.get("expected_size_bytes", ""), source.get("sha256", ""))
+                ok, verification, observed_sha = verify_archive(destination, source.get("expected_size_bytes", ""), source.get("sha256", ""), source.get("md5", ""))
             else:
                 matches = list((base / ancestry).glob(f"{gene}_*.tar"))
                 raw_files_by_ancestry[ancestry].extend(matches)
@@ -290,12 +429,14 @@ def main() -> None:
         if download_failed:
             batch_df.loc[index, "status"] = "download_or_verification_failed"
             write_atomic(batch_df, manifest_path)
+            record_progress(batch_id, position, "download_or_verification_failed", str(download_audit))
             if args.stop_on_error:
                 raise SystemExit(f"[ERROR] {batch_id} download/verification failed; see {download_audit}")
             continue
         if not args.run or args.download_only:
             batch_df.loc[index, "status"] = "download_verified" if args.run else "planned"
             write_atomic(batch_df, manifest_path)
+            record_progress(batch_id, position, str(batch_df.loc[index, "status"]), str(download_audit))
             continue
 
         gene_file = qc_dir / "gene_batches" / f"{batch_id}.txt"
@@ -303,6 +444,7 @@ def main() -> None:
         gene_file.write_text("\n".join(batch_genes) + "\n", encoding="utf-8")
         failed = False
         for ancestry in ANCESTRIES:
+            print(f"[INFO] Batch {position}/{len(selected_batches)}: processing {ancestry}", flush=True)
             output = outdir / ancestry / f"exposure_{batch_id}.tsv"
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
@@ -311,7 +453,7 @@ def main() -> None:
             log.write_text(result.stdout + result.stderr, encoding="utf-8")
             if result.returncode or not output.exists():
                 failed = True
-                print(f"[ERROR] {batch_id} {ancestry}; see {log}")
+                print(f"[ERROR] {batch_id} {ancestry}; see {log}", flush=True)
         if failed:
             batch_df.loc[index, "status"] = "processing_failed"
             batch_df.loc[index, "raw_cleanup"] = "retained_processing_failed"
@@ -332,10 +474,13 @@ def main() -> None:
             batch_df.loc[index, "status"] = "completed"
             batch_df.loc[index, "raw_cleanup"] = "retained_flag_not_set"
         write_atomic(batch_df, manifest_path)
+        record_progress(batch_id, position, str(batch_df.loc[index, "status"]), str(batch_df.loc[index, "raw_cleanup"]))
         if failed and args.stop_on_error:
             raise SystemExit(f"[ERROR] {batch_id} processing failed")
 
-    print(f"[INFO] Batch manifest: {manifest_path}")
+    print_batch_state(batch_df, "Final batch state")
+    print(f"[INFO] Batch manifest: {manifest_path}", flush=True)
+    print(f"[INFO] Batch progress: {progress_path}", flush=True)
 
 
 if __name__ == "__main__":
