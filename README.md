@@ -172,10 +172,15 @@ metadata/download path for that file. This means existing raw data and newly
 downloaded data can be mixed safely within the same 10-gene batch.
 
 When `--existing-raw-base` is supplied, the runner scans that location before
-starting work and reorders unfinished batches: batches with all available raw
-sources run first, followed by batches with some available sources, then batches
-that require downloads. This lets existing raw data be consumed and cleaned in
-10-gene units before new Synapse downloads begin.
+starting work. On the first run (before `batch_manifest.tsv` exists), it builds
+the stable 10-gene plan from the actual archive inventory: genes with a complete
+EUR/EAS raw pair are grouped into the first batches. On subsequent runs the
+saved plan and batch IDs are preserved for safe resume, but unfinished batches
+are still executed in coverage priority: fully available raw sources first,
+then partial existing-data batches, then download-only batches. Thus a displayed
+`batch_007` is a stable plan ID, while `Batch 1/N` is its current execution
+position. This lets existing raw data be consumed and cleaned in 10-gene units
+before new Synapse downloads begin.
 
 With `--delete-raw-after-processing`, the default cleanup removes only the
 staging symlink and preserves the separate original. To delete the separate

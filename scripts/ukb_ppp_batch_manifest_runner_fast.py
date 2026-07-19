@@ -199,6 +199,24 @@ def prioritize_existing_raw_batches(batches: Any, manifest: Any, existing_base: 
     return ranked.drop(columns=["existing_raw_sources", "source_count"])
 
 
+def prioritize_genes_from_existing_raw(genes: list[str], manifest: Any, existing_base: Path) -> list[str]:
+    """Create the initial stable plan with fully available raw gene pairs first."""
+    available, remaining = [], []
+    for number, gene in enumerate(genes, start=1):
+        sources = manifest[manifest["gene_symbol"].eq(gene)]
+        present = {
+            row["ancestry"] for row in sources.to_dict("records")
+            if (existing_base / row["ancestry"] / row["source_file"]).exists()
+            and (existing_base / row["ancestry"] / row["source_file"]).stat().st_size > 0
+            and tarfile.is_tarfile(existing_base / row["ancestry"] / row["source_file"])
+        }
+        (available if set(ANCESTRIES).issubset(present) else remaining).append(gene)
+        if number % 100 == 0 or number == len(genes):
+            print(f"[INFO] Existing raw gene scan: {number}/{len(genes)}", flush=True)
+    print(f"[INFO] Initial batch plan: {len(available)} fully available paired genes first", flush=True)
+    return available + remaining
+
+
 def restore_batch_state(batch_df: Any, manifest_path: Path, pd: Any) -> Any:
     """Carry terminal state forward so a restarted run does not repeat batches."""
     if not manifest_path.exists():
@@ -414,6 +432,8 @@ def main() -> None:
     genes = paired_genes_from_manifest(download_manifest) if download_manifest is not None else paired_genes_from_raw(raw_audit)
     if not genes:
         raise SystemExit("[ERROR] No EUR/EAS paired genes found. Supply --download-manifest or populate --base.")
+    if existing_raw_base is not None and download_manifest is not None and not manifest_path.exists():
+        genes = prioritize_genes_from_existing_raw(genes, download_manifest, existing_raw_base)
 
     rows: list[dict[str, object]] = []
     for offset in range(0, len(genes), args.batch_size):
