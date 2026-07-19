@@ -137,6 +137,33 @@ def hydrate_selected_synapse_metadata(
     return sources
 
 
+def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, existing_base: Path) -> int:
+    """Link valid archives from a separate existing-data root into this run's base.
+
+    A symlink lets the runner process and later clean its staging path without
+    deleting the original archive in ``existing_base``.
+    """
+    staged = 0
+    for source in sources:
+        source_file = source.get("source_file", "")
+        ancestry = source.get("ancestry", "")
+        if not source_file or not ancestry:
+            continue
+        destination = base / ancestry / source_file
+        candidate = existing_base / ancestry / source_file
+        if destination.is_symlink() and not destination.exists():
+            destination.unlink()
+        if destination.exists() or not candidate.exists() or candidate.stat().st_size == 0:
+            continue
+        if not tarfile.is_tarfile(candidate):
+            print(f"[WARN] Existing raw archive is not a valid tar and will not be staged: {candidate}", flush=True)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.symlink_to(candidate.resolve())
+        staged += 1
+    return staged
+
+
 def restore_batch_state(batch_df: Any, manifest_path: Path, pd: Any) -> Any:
     """Carry terminal state forward so a restarted run does not repeat batches."""
     if not manifest_path.exists():
@@ -310,6 +337,7 @@ def remove_raw_files(raw_files: list[Path], status_path: Path) -> list[dict[str,
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
+    parser.add_argument("--existing-raw-base", help="Optional separate raw archive root to validate and symlink into --base per batch.")
     parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256, md5, synapse_id.")
     parser.add_argument("--outdir", default="results/exposure_batches")
     parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
@@ -339,6 +367,7 @@ def main() -> None:
         raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
     qc_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = qc_dir / "batch_manifest.tsv"
     download_manifest = read_download_manifest(Path(args.download_manifest), pd) if args.download_manifest else None
@@ -399,6 +428,11 @@ def main() -> None:
             for gene in batch_genes:
                 for ancestry in ANCESTRIES:
                     source_rows.append({"gene_symbol": gene, "ancestry": ancestry, "source_file": "", "url": ""})
+
+        if existing_raw_base is not None:
+            staged = stage_existing_raw_archives(source_rows, base, existing_raw_base)
+            if staged:
+                print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {staged} validated archive(s) from {existing_raw_base}", flush=True)
 
         audit_rows = []
         raw_files_by_ancestry: dict[str, list[Path]] = {ancestry: [] for ancestry in ANCESTRIES}

@@ -147,16 +147,19 @@ of `python3` in the same command.
 
 ### Reuse existing raw archives
 
-If the required archives already exist under an `IS_Analysis` raw-data folder,
-point `--base` at that folder instead of copying them. The runner checks the
-ancestry-specific source path (`EUR/` or `EAS/`), requires a non-empty valid tar,
-and reuses it. For a valid existing archive it skips the selected file's Synapse
-metadata request and download, then performs the normal tar/checksum validation
-in the batch workflow (including any checksum already stored in the manifest).
-For example, when raw data are in the Colab clone:
+If the required archives already exist at a **different location**, keep the
+current run/staging directory in `--base` and specify that separate location
+with `--existing-raw-base`. The runner checks the ancestry-specific source path
+(`EUR/` or `EAS/`), requires a non-empty valid tar, and creates a symlink in
+`--base` only for valid archives. Raw cleanup later removes the staging symlink,
+not the original archive. A staged archive skips its Synapse metadata request
+and download, then receives normal tar/checksum validation in the batch workflow
+(including any checksum already stored in the manifest). For example, when raw
+data are in the Colab clone but run outputs/staging are in Drive:
 
 ```bash
---base "${CODE_ROOT}/data/rawdata/pqtl/selected_targets"
+--base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+--existing-raw-base "${CODE_ROOT}/data/rawdata/pqtl/selected_targets"
 ```
 
 Keep `--download-manifest` when lifecycle tracking or raw cleanup is required;
