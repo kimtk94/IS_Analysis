@@ -188,6 +188,9 @@ to `results/qc/batch_pipeline/execution_plan.tsv`. During processing it prints
 the matching `Batch position/total` header and phase messages, so the batch
 currently running can be identified from notebook output, `execution_plan.tsv`,
 or `batch_progress.tsv`.
+The concise console summary includes a one-time run header, raw complete/partial
+queue counts, per-batch staging and verification totals, and a `[DONE]` line
+with the batch status and elapsed time.
 When an existing raw base is configured, stdout also prints `Existing raw mode:
 ON`, the source/staging locations, and for every batch the number of archive
 sources checked and staged before Synapse fallback.

@@ -11,6 +11,7 @@ batch result.
 from __future__ import annotations
 
 import argparse
+import time
 import csv
 import hashlib
 import importlib.util
@@ -31,6 +32,11 @@ RESTART_CLEANUP_STATUSES = {"running", "metadata_fetch_failed", "download_or_ver
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def elapsed(started: float) -> str:
+    seconds = int(time.monotonic() - started)
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
 def safe_gene(gene: str) -> str:
@@ -195,7 +201,7 @@ def prioritize_existing_raw_batches(batches: Any, manifest: Any, existing_base: 
     reusable = int((ranked["existing_raw_sources"] > 0).sum())
     complete = int((ranked["existing_raw_sources"] == ranked["source_count"]).sum())
     print(f"[INFO] Existing raw priority: {complete} fully available, {reusable} partially/fully available batches first", flush=True)
-    return ranked.drop(columns=["existing_raw_sources", "source_count"])
+    return ranked
 
 
 def prioritize_genes_from_existing_raw(genes: list[str], manifest: Any, existing_base: Path) -> list[str]:
@@ -451,6 +457,10 @@ def main() -> None:
         rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", "raw_cleanup": "not_requested", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
     batch_df = pd.DataFrame(rows)
     batch_df = restore_batch_state(batch_df, manifest_path, pd)
+    print("=" * 80, flush=True)
+    print("UKB-PPP EXPOSURE PIPELINE", flush=True)
+    print(f"Total={len(batch_df)} | completed={int(batch_df['status'].isin(COMPLETED_BATCH_STATUSES).sum())} | batch_size={args.batch_size} | cleanup={'ON' if args.delete_raw_after_processing else 'OFF'}", flush=True)
+    print("=" * 80, flush=True)
     print_batch_state(batch_df, "Current batch state")
     selected_batches = batch_df
     if args.only_batch:
@@ -464,6 +474,9 @@ def main() -> None:
         selected_batches = selected_batches[~completed].copy()
     if existing_raw_base is not None and download_manifest is not None:
         selected_batches = prioritize_existing_raw_batches(selected_batches, download_manifest, existing_raw_base, pd)
+        complete_raw = int((selected_batches["existing_raw_sources"] == selected_batches["source_count"]).sum())
+        partial_raw = int(((selected_batches["existing_raw_sources"] > 0) & (selected_batches["existing_raw_sources"] < selected_batches["source_count"])).sum())
+        print(f"[QUEUE] raw complete={complete_raw} | raw partial={partial_raw} | download required={len(selected_batches) - complete_raw}", flush=True)
     if args.max_batches is not None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:
@@ -477,6 +490,7 @@ def main() -> None:
     execution_plan.insert(0, "execution_position", range(1, len(execution_plan) + 1))
     write_atomic(execution_plan, execution_plan_path)
     print(f"[INFO] Full execution plan: {execution_plan_path}", flush=True)
+    selected_batches = selected_batches.drop(columns=["existing_raw_sources", "source_count"], errors="ignore")
     write_atomic(batch_df, manifest_path)
     progress_path = qc_dir / "batch_progress.tsv"
     progress_rows: list[dict[str, str]] = []
@@ -489,6 +503,7 @@ def main() -> None:
         write_atomic(pd.DataFrame(progress_rows), progress_path)
 
     for position, (index, batch) in enumerate(selected_batches.iterrows(), start=1):
+        batch_started = time.monotonic()
         batch_id, batch_genes = str(batch.batch_id), str(batch.genes).split(",")
         previous_status = str(batch_df.loc[index, "status"])
         print(f"\n===== Batch {position}/{len(selected_batches)}: {batch_id} ({len(batch_genes)} genes; previous={previous_status}) =====", flush=True)
@@ -508,14 +523,16 @@ def main() -> None:
 
         staged_existing: dict[str, Path] = {}
         if existing_raw_base is not None:
+            stage_started = time.monotonic()
             print(f"[INFO] Batch {position}/{len(selected_batches)}: checking {len(source_rows)} source archive(s) in existing raw base", flush=True)
             staged_existing = stage_existing_raw_archives(source_rows, base, existing_raw_base)
             if staged_existing:
                 copied = sum(not Path(path).is_symlink() for path in staged_existing)
                 copy_detail = f"; copied={copied} because symlinks are unsupported" if copied else ""
-                print(f"[INFO] Batch {position}/{len(selected_batches)}: staged {len(staged_existing)} validated archive(s) from {existing_raw_base}{copy_detail}", flush=True)
+                staged_bytes = sum(Path(path).stat().st_size for path in staged_existing)
+                print(f"[1/5 STAGING ] reused={len(staged_existing)} | {staged_bytes / 1e9:.1f} GB | {elapsed(stage_started)}{copy_detail}", flush=True)
             else:
-                print(f"[INFO] Batch {position}/{len(selected_batches)}: no new valid existing archives staged; missing sources will use normal download handling", flush=True)
+                print(f"[1/5 STAGING ] reused=0 | {elapsed(stage_started)}", flush=True)
             record_progress(batch_id, position, "existing_raw_checked", f"staged={len(staged_existing)} of {len(source_rows)}")
 
         audit_rows = []
@@ -533,6 +550,7 @@ def main() -> None:
                 if args.stop_on_error:
                     raise SystemExit(f"[ERROR] {batch_id} metadata lookup failed")
                 continue
+        verify_started = time.monotonic()
         print(f"[INFO] Batch {position}/{len(selected_batches)}: verifying {len(source_rows)} source archives", flush=True)
         for source in source_rows:
             ancestry, gene = source["ancestry"], source["gene_symbol"]
@@ -555,6 +573,8 @@ def main() -> None:
                 download_failed = True
         download_audit = qc_dir / "downloads" / f"{batch_id}.tsv"
         write_atomic(pd.DataFrame(audit_rows), download_audit)
+        verified = sum(1 for row in audit_rows if row["verified"])
+        print(f"[3/5 VERIFY  ] verified={verified}/{len(audit_rows)} | invalid={len(audit_rows) - verified} | {elapsed(verify_started)}", flush=True)
         if download_failed:
             batch_df.loc[index, "status"] = "download_or_verification_failed"
             write_atomic(batch_df, manifest_path)
@@ -620,6 +640,7 @@ def main() -> None:
             batch_df.loc[index, "raw_cleanup"] = "retained_flag_not_set"
         write_atomic(batch_df, manifest_path)
         record_progress(batch_id, position, str(batch_df.loc[index, "status"]), str(batch_df.loc[index, "raw_cleanup"]))
+        print(f"[DONE] {position}/{len(selected_batches)} {batch_id} | status={batch_df.loc[index, 'status']} | elapsed={elapsed(batch_started)}", flush=True)
         if failed and args.stop_on_error:
             raise SystemExit(f"[ERROR] {batch_id} processing failed")
 
