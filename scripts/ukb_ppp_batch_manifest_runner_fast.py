@@ -140,8 +140,8 @@ def hydrate_selected_synapse_metadata(
 def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, existing_base: Path) -> dict[str, Path]:
     """Link valid archives from a separate existing-data root into this run's base.
 
-    A symlink lets the runner process and later clean its staging path without
-    deleting the original archive in ``existing_base``.
+    Prefer a symlink so cleanup does not touch the original archive. Google
+    Drive FUSE does not support symlinks, so fall back to an atomic local copy.
     """
     staged: dict[str, Path] = {}
     for source in sources:
@@ -159,7 +159,17 @@ def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, exist
             print(f"[WARN] Existing raw archive is not a valid tar and will not be staged: {candidate}", flush=True)
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.symlink_to(candidate.resolve())
+        try:
+            destination.symlink_to(candidate.resolve())
+        except OSError as error:
+            temporary = destination.with_suffix(destination.suffix + ".part")
+            try:
+                shutil.copy2(candidate, temporary)
+                os.replace(temporary, destination)
+                print(f"[INFO] Symlink unsupported; copied existing raw archive for staging: {candidate.name}", flush=True)
+            except OSError:
+                temporary.unlink(missing_ok=True)
+                raise error
         staged[str(destination)] = candidate
     return staged
 
@@ -402,7 +412,10 @@ def main() -> None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:
         raise SystemExit("[ERROR] No batches selected")
-    print(f"[INFO] Batches selected for this run: {', '.join(selected_batches['batch_id'].tolist())}", flush=True)
+    selected_ids = selected_batches["batch_id"].tolist()
+    preview = ", ".join(selected_ids[:10])
+    suffix = "" if len(selected_ids) <= 10 else f", ... (+{len(selected_ids) - 10} more)"
+    print(f"[INFO] Batches selected for this run: {preview}{suffix}", flush=True)
     write_atomic(batch_df, manifest_path)
     progress_path = qc_dir / "batch_progress.tsv"
     progress_rows: list[dict[str, str]] = []

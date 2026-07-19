@@ -162,6 +162,10 @@ data are in the Colab clone but run outputs/staging are in Drive:
 --existing-raw-base "${CODE_ROOT}/data/rawdata/pqtl/selected_targets"
 ```
 
+Google Drive FUSE may reject symlink creation. In that case the runner reports
+the fallback and atomically copies only the selected archive into `--base`; its
+source archive remains unchanged unless optional source deletion is requested.
+
 This check happens at the start of every selected batch. If an archive is absent
 or invalid in `--existing-raw-base`, the runner follows the normal Synapse
 metadata/download path for that file. This means existing raw data and newly
