@@ -171,6 +171,14 @@ or invalid in `--existing-raw-base`, the runner follows the normal Synapse
 metadata/download path for that file. This means existing raw data and newly
 downloaded data can be mixed safely within the same 10-gene batch.
 
+The separate raw root is initially inventoried by filename only, which avoids a
+slow full tar scan. Each archive is validated only when its batch is staged.
+To begin each batch with only current inputs in the staging root, add
+`--prune-staging-raw`; it deletes `.tar` and `.part` files under `--base` that
+are not required by the current batch and records the deletion in
+`results/qc/batch_pipeline/staging_prune/batch_###.tsv`. It never deletes files
+from `--existing-raw-base`.
+
 When `--existing-raw-base` is supplied, the runner scans that location before
 starting work. On the first run (before `batch_manifest.tsv` exists), it builds
 the stable 10-gene plan from the actual archive inventory: genes with a complete
@@ -194,6 +202,11 @@ with the batch status and elapsed time.
 When an existing raw base is configured, stdout also prints `Existing raw mode:
 ON`, the source/staging locations, and for every batch the number of archive
 sources checked and staged before Synapse fallback.
+
+In Colab, use one `%%bash` cell or `!python3 -u` with absolute paths. A separate
+`!cd` command does not persist to the next `!` command. The runner resolves its
+default R preparation script relative to the cloned repository, so the documented
+absolute-path command is safe from any notebook working directory.
 
 With `--delete-raw-after-processing`, the default cleanup removes only the
 staging symlink and preserves the separate original. To delete the separate

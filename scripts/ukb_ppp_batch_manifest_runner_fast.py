@@ -179,7 +179,32 @@ def stage_existing_raw_archives(sources: list[dict[str, str]], base: Path, exist
     return staged
 
 
-def prioritize_existing_raw_batches(batches: Any, manifest: Any, existing_base: Path, pd: Any) -> Any:
+def list_existing_raw_names(existing_base: Path) -> dict[str, set[str]]:
+    """Read filenames once; archive validation remains a per-batch operation."""
+    return {
+        ancestry: {path.name for path in (existing_base / ancestry).glob("*.tar") if path.is_file()}
+        for ancestry in ANCESTRIES
+    }
+
+
+def prune_staging_raw(sources: list[dict[str, str]], base: Path) -> int:
+    """Delete stale staged archives while retaining only the current batch inputs."""
+    expected = {ancestry: set() for ancestry in ANCESTRIES}
+    for row in sources:
+        if row.get("ancestry") in expected:
+            expected[row["ancestry"]].add(row.get("source_file", ""))
+    removed = 0
+    for ancestry in ANCESTRIES:
+        folder = base / ancestry
+        if folder.is_dir():
+            for path in folder.iterdir():
+                if path.is_file() and (path.suffix == ".tar" or path.name.endswith(".part")) and path.name not in expected[ancestry]:
+                    path.unlink()
+                    removed += 1
+    return removed
+
+
+def prioritize_existing_raw_batches(batches: Any, manifest: Any, inventory: dict[str, set[str]], pd: Any) -> Any:
     """Run batches backed by a separate raw-data root before download-only batches."""
     coverage = []
     for number, (index, batch) in enumerate(batches.iterrows(), start=1):
@@ -187,8 +212,7 @@ def prioritize_existing_raw_batches(batches: Any, manifest: Any, existing_base: 
         sources = manifest[manifest["gene_symbol"].isin(genes)]
         available = 0
         for row in sources.to_dict("records"):
-            path = existing_base / row["ancestry"] / row["source_file"]
-            if path.exists() and path.stat().st_size > 0 and tarfile.is_tarfile(path):
+            if row["source_file"] in inventory.get(row["ancestry"], set()):
                 available += 1
         coverage.append({"index": index, "existing_raw_sources": available, "source_count": len(sources)})
         if number % 100 == 0 or number == len(batches):
@@ -204,16 +228,14 @@ def prioritize_existing_raw_batches(batches: Any, manifest: Any, existing_base: 
     return ranked
 
 
-def prioritize_genes_from_existing_raw(genes: list[str], manifest: Any, existing_base: Path) -> list[str]:
+def prioritize_genes_from_existing_raw(genes: list[str], manifest: Any, inventory: dict[str, set[str]]) -> list[str]:
     """Create the initial stable plan with fully available raw gene pairs first."""
     available, remaining = [], []
     for number, gene in enumerate(genes, start=1):
         sources = manifest[manifest["gene_symbol"].eq(gene)]
         present = {
             row["ancestry"] for row in sources.to_dict("records")
-            if (existing_base / row["ancestry"] / row["source_file"]).exists()
-            and (existing_base / row["ancestry"] / row["source_file"]).stat().st_size > 0
-            and tarfile.is_tarfile(existing_base / row["ancestry"] / row["source_file"])
+            if row["source_file"] in inventory.get(row["ancestry"], set())
         }
         (available if set(ANCESTRIES).issubset(present) else remaining).append(gene)
         if number % 100 == 0 or number == len(genes):
@@ -401,6 +423,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="data/rawdata/pqtl/selected_targets", help="Raw archive root containing EUR/ and EAS/.")
     parser.add_argument("--existing-raw-base", help="Optional separate raw archive root to validate and symlink into --base per batch.")
+    parser.add_argument("--prune-staging-raw", action="store_true", help="Delete staged raw archives not needed by the current batch.")
     parser.add_argument("--delete-existing-raw-after-processing", action="store_true", help="Delete staged originals in --existing-raw-base only after successful processing and staging cleanup.")
     parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256, md5, synapse_id.")
     parser.add_argument("--outdir", default="results/exposure_batches")
@@ -433,7 +456,13 @@ def main() -> None:
         raise SystemExit("[ERROR] --delete-existing-raw-after-processing requires --existing-raw-base and --delete-raw-after-processing")
     pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    rscript_path = Path(args.rscript)
+    if not rscript_path.is_absolute():
+        rscript_path = Path(__file__).resolve().parent.parent / rscript_path
+    if not rscript_path.is_file():
+        raise SystemExit(f"[ERROR] R preparation script not found: {rscript_path}")
     existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
+    existing_raw_inventory = list_existing_raw_names(existing_raw_base) if existing_raw_base else None
     if existing_raw_base is None:
         print("[INFO] Existing raw mode: OFF (all missing sources use normal download handling)", flush=True)
     else:
@@ -448,7 +477,7 @@ def main() -> None:
         raise SystemExit("[ERROR] No EUR/EAS paired genes found. Supply --download-manifest or populate --base.")
     if existing_raw_base is not None and download_manifest is not None and not manifest_path.exists():
         print("[INFO] Existing raw mode: building initial 10-gene plan from archive inventory", flush=True)
-        genes = prioritize_genes_from_existing_raw(genes, download_manifest, existing_raw_base)
+        genes = prioritize_genes_from_existing_raw(genes, download_manifest, existing_raw_inventory)
 
     rows: list[dict[str, object]] = []
     for offset in range(0, len(genes), args.batch_size):
@@ -473,7 +502,7 @@ def main() -> None:
             print(f"[INFO] Skipping {skipped} completed batch(es); use --rerun-completed to override", flush=True)
         selected_batches = selected_batches[~completed].copy()
     if existing_raw_base is not None and download_manifest is not None:
-        selected_batches = prioritize_existing_raw_batches(selected_batches, download_manifest, existing_raw_base, pd)
+        selected_batches = prioritize_existing_raw_batches(selected_batches, download_manifest, existing_raw_inventory, pd)
         complete_raw = int((selected_batches["existing_raw_sources"] == selected_batches["source_count"]).sum())
         partial_raw = int(((selected_batches["existing_raw_sources"] > 0) & (selected_batches["existing_raw_sources"] < selected_batches["source_count"])).sum())
         print(f"[QUEUE] raw complete={complete_raw} | raw partial={partial_raw} | download required={len(selected_batches) - complete_raw}", flush=True)
@@ -520,6 +549,10 @@ def main() -> None:
             for gene in batch_genes:
                 for ancestry in ANCESTRIES:
                     source_rows.append({"gene_symbol": gene, "ancestry": ancestry, "source_file": "", "url": ""})
+
+        if args.prune_staging_raw:
+            removed = prune_staging_raw(source_rows, base)
+            print(f"[1/5 PRUNE   ] removed={removed} stale staged archive(s)", flush=True)
 
         staged_existing: dict[str, Path] = {}
         if existing_raw_base is not None:
@@ -597,7 +630,7 @@ def main() -> None:
             output = outdir / ancestry / f"exposure_{batch_id}.tsv"
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            command = ["Rscript", args.rscript, "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry]
+            command = ["Rscript", str(rscript_path), "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry]
             result = subprocess.run(command, check=False, text=True, capture_output=True)
             log.write_text(result.stdout + result.stderr, encoding="utf-8")
             if result.returncode or not output.exists():
