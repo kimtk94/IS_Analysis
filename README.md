@@ -182,6 +182,11 @@ then partial existing-data batches, then download-only batches. Thus a displayed
 position. This lets existing raw data be consumed and cleaned in 10-gene units
 before new Synapse downloads begin.
 
+Before processing starts, stdout prints every selected execution-plan entry as
+`[PLAN] position/total batch_ID: genes`. During processing it prints the matching
+`Batch position/total` header and phase messages, so the batch currently running
+can be identified from either the notebook output or `batch_progress.tsv`.
+
 With `--delete-raw-after-processing`, the default cleanup removes only the
 staging symlink and preserves the separate original. To delete the separate
 original as well after its 10-gene batch is successfully processed, explicitly

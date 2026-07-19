@@ -463,6 +463,13 @@ def main() -> None:
     preview = ", ".join(selected_ids[:10])
     suffix = "" if len(selected_ids) <= 10 else f", ... (+{len(selected_ids) - 10} more)"
     print(f"[INFO] Batches selected for this run: {preview}{suffix}", flush=True)
+    print("[INFO] Execution batch plan:", flush=True)
+    for position, (_, batch) in enumerate(selected_batches.iterrows(), start=1):
+        print(
+            f"[PLAN] {position}/{len(selected_batches)} {batch['batch_id']}: "
+            f"{batch['n_genes']} genes ({batch['genes']})",
+            flush=True,
+        )
     write_atomic(batch_df, manifest_path)
     progress_path = qc_dir / "batch_progress.tsv"
     progress_rows: list[dict[str, str]] = []
