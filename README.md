@@ -144,6 +144,16 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
 To safely resume a single failed batch, use `--only-batch batch_003`. To only
 download and validate archives, add `--download-only` with `--run`.
 
+### Restart behavior
+
+The runner writes the batch status after every terminal batch state. On a later
+`--run`, it restores that state from `batch_manifest.tsv` and automatically skips
+`completed`, `completed_raw_deleted`, and `completed_raw_retained` batches. This
+prevents already processed data from being downloaded or analysed again after a
+Colab interruption. Failed or incomplete batches remain eligible for the next
+run. Use `--only-batch batch_003` to resume one failed batch, or add
+`--rerun-completed` only when deliberately rerunning completed work.
+
 `--delete-raw-after-processing` is the production disk-space cleanup step. It
 requires `--download-manifest`; raw-only discovery mode cannot delete files.
 deletes an archive only after both ancestry batch outputs exist and the R

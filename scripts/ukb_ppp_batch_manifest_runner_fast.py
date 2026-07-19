@@ -25,6 +25,7 @@ from typing import Any
 
 ANCESTRIES = ("EUR", "EAS")
 REQUIRED_DOWNLOAD_COLUMNS = {"ancestry", "gene_symbol", "source_file", "url"}
+COMPLETED_BATCH_STATUSES = {"completed", "completed_raw_deleted", "completed_raw_retained"}
 
 
 def now() -> str:
@@ -122,6 +123,25 @@ def hydrate_selected_synapse_metadata(
             manifest.loc[mask, column] = value
     write_atomic(manifest, manifest_path)
     return sources
+
+
+def restore_batch_state(batch_df: Any, manifest_path: Path, pd: Any) -> Any:
+    """Carry terminal state forward so a restarted run does not repeat batches."""
+    if not manifest_path.exists():
+        return batch_df
+    previous = pd.read_csv(manifest_path, sep="\t", dtype=str).fillna("")
+    if not {"batch_id", "genes", "status"}.issubset(previous.columns):
+        print(f"[WARN] Ignoring incompatible existing batch manifest: {manifest_path}")
+        return batch_df
+    previous = previous.drop_duplicates("batch_id", keep="last").set_index("batch_id")
+    for index, row in batch_df.iterrows():
+        batch_id = row["batch_id"]
+        if batch_id not in previous.index or previous.at[batch_id, "genes"] != row["genes"]:
+            continue
+        for column in ("status", "raw_cleanup"):
+            if column in previous.columns:
+                batch_df.loc[index, column] = previous.at[batch_id, column]
+    return batch_df
 
 
 def record_raw_cleanup_in_manifest(manifest: Any, cleanup_rows: list[dict[str, str]], batch_id: str) -> None:
@@ -256,6 +276,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--only-batch", help="Comma-separated batch IDs, e.g. batch_001,batch_002.")
     parser.add_argument("--max-batches", type=int)
+    parser.add_argument("--rerun-completed", action="store_true", help="Run batches marked completed in an existing batch manifest.")
     parser.add_argument("--p-threshold", default="5e-8")
     parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
     parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
@@ -293,10 +314,17 @@ def main() -> None:
         batch_id = f"batch_{offset // args.batch_size + 1:03d}"
         rows.append({"batch_id": batch_id, "n_genes": len(batch_genes), "genes": ",".join(batch_genes), "status": "pending", "raw_cleanup": "not_requested", **{f"{anc.lower()}_output": str(outdir / anc / f"exposure_{batch_id}.tsv") for anc in ANCESTRIES}})
     batch_df = pd.DataFrame(rows)
+    batch_df = restore_batch_state(batch_df, manifest_path, pd)
     selected_batches = batch_df
     if args.only_batch:
         wanted = {value.strip() for value in args.only_batch.split(",") if value.strip()}
         selected_batches = batch_df[batch_df["batch_id"].isin(wanted)].copy()
+    if args.run and not args.rerun_completed:
+        completed = selected_batches["status"].isin(COMPLETED_BATCH_STATUSES)
+        skipped = int(completed.sum())
+        if skipped:
+            print(f"[INFO] Skipping {skipped} completed batch(es); use --rerun-completed to override")
+        selected_batches = selected_batches[~completed].copy()
     if args.max_batches is not None:
         selected_batches = selected_batches.head(args.max_batches).copy()
     if selected_batches.empty:
