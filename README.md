@@ -7,35 +7,133 @@ writes EUR and EAS outputs separately.
 
 ## Real-data batch workflow
 
-Run this in the Colab/Drive data-setup environment, not during PR review. Create
-a tab-separated download manifest with one row per source archive:
+Run the production workflow in Google Colab. Clone code to
+`/content/IS_Analysis_V2`, mount Drive, and run all data, manifests, downloads,
+and outputs under `/content/drive/MyDrive/IS_Analysis_V2/`. Do not use the
+ephemeral Colab clone as the data workspace.
 
-```tsv
-ancestry	gene_symbol	source_file	url	expected_size_bytes	sha256
-EUR	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eur.tar		
-EAS	ALPHA	ALPHA_P12345_OID1_v1_PANEL.tar	https://example.invalid/eas.tar		
-```
-
-`ancestry`, `gene_symbol`, `source_file`, and `url` are required. `expected_size_bytes`
-and `sha256` are optional but strongly recommended when the source provides them.
+The manifest is generated from explicit Synapse parent folders; do not type gene
+symbols or archive rows manually. Initial creation records only `ancestry`, the
+gene symbol inferred from the archive filename, source URL/ID, and the explicit
+`synapse_parent_id`. Before each 10-gene batch, the runner retrieves size and
+checksum metadata only for that batch's Synapse files (maximum 8 concurrent
+requests), persists it in the manifest, then downloads and verifies the files.
 Every selected gene must have at least one EUR and one EAS row; genes without a
 pair are intentionally excluded. This TSV is also the **raw-data lifecycle
 manifest**: when cleanup is enabled, the runner writes `pipeline_batch_id`,
 `raw_lifecycle`, `raw_cleanup_at`, and `raw_cleanup_reason` back into this same
 file. Keep it on Drive and do not delete or replace it while a run is active.
 
+### Build the manifest from Synapse metadata
+
+Do not manually fill archive sizes, hashes, or genes. In the data-setup
+environment, explicitly provide the UKB-PPP **EUR** and **EAS** parent folders;
+the builder enumerates their `.tar` files and derives the gene symbol from the
+filename. Execute the following **Colab cells in order**.
+
+**1. Python cell — mount Google Drive.**
+
+```python
+from google.colab import drive
+
+drive.mount("/content/drive")
+```
+
+**2. Bash cell — install all runtime dependencies, including `synapseclient`.**
+
+```bash
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+cd "${CODE_ROOT}"
+bash scripts/setup_codex_env.sh
+```
+
+`scripts/setup_codex_env.sh` installs Python packages from `requirements.txt`,
+which includes `synapseclient>=4.9` (the non-deprecated Synapse child-listing
+API), and installs the R dependencies needed for the
+batch preparation stage. Run this only in the user-run Colab setup environment,
+never as part of fixture-only PR review; see [AGENTS.md](AGENTS.md).
+
+**3. Python cell — set the Synapse personal access token without printing it.**
+
+```python
+import os
+from getpass import getpass
+
+os.environ["SYNAPSE_AUTH_TOKEN"] = getpass("Synapse personal access token: ")
+```
+
+**4. Bash cell — create the EUR/EAS manifest in Drive.**
+
+```bash
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+SCRIPT="${CODE_ROOT}/scripts/build_ukb_ppp_download_manifest.py"
+
+if [[ ! -f "${SCRIPT}" ]]; then
+  echo "[ERROR] 스크립트를 찾을 수 없습니다: ${SCRIPT}" >&2
+  echo "먼저 GitHub 저장소가 ${CODE_ROOT}에 clone되었는지 확인하세요." >&2
+  exit 1
+fi
+
+: "${SYNAPSE_AUTH_TOKEN:?SYNAPSE_AUTH_TOKEN을 먼저 설정하세요.}"
+mkdir -p "${WORK_ROOT}/data/metadata"
+
+python3 "${SCRIPT}" \
+  --synapse-parent "EUR:syn51365303" \
+  --synapse-parent "EAS:syn51365306" \
+  --output "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
+
+echo "[DONE] Manifest 생성 완료"
+echo "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
+```
+
+This records each file's Synapse ID, canonical Synapse URL, and parent ID without
+downloading archives or making a per-file checksum request. The runner lazily
+retrieves size/MD5 metadata for the active batch and emits progress every 100
+metadata lookups. For a reproducible or offline review, export
+the folder metadata from Synapse and use `--synapse-metadata-file`; exported
+rows must contain an ancestry and `synapse_parent_id`. The folder-query and
+subsequent downloads require `synapseclient` and Synapse authentication; they
+are setup/runtime operations, not review checks.
+
 First create and review the plan without downloading:
 
 ```bash
-python3 scripts/ukb_ppp_batch_manifest_runner_fast.py \
-  --download-manifest data/metadata/ukb_ppp_download_manifest.tsv
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+cd "${CODE_ROOT}"
+
+python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
+  --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
 ```
 
 Then download, validate, and process all batches. The default batch size is 10.
 
 ```bash
-python3 scripts/ukb_ppp_batch_manifest_runner_fast.py \
-  --download-manifest data/metadata/ukb_ppp_download_manifest.tsv \
+%%bash
+set -euo pipefail
+
+CODE_ROOT="/content/IS_Analysis_V2"
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+cd "${CODE_ROOT}"
+
+python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
+  --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --batch-size 10 \
   --p-threshold 5e-8 \
   --run \

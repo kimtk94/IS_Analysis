@@ -4,6 +4,7 @@
 # This script covers the dependencies that blocked local validation in Codex:
 #   - pandas for the Python batch/audit runners
 #   - openpyxl for final audit Excel output
+#   - synapseclient for the user-run Synapse metadata/download workflow
 #   - Rscript plus the data.table package for scripts/01_prepare_exposure_fast.R
 #
 # Usage from the repository root:
@@ -33,6 +34,7 @@ python_deps_available() {
   "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1
 import pandas
 import openpyxl
+import synapseclient
 PY
 }
 
@@ -80,9 +82,11 @@ echo "[INFO] Verifying required executables and packages"
 "${PYTHON_BIN}" - <<'PY'
 import pandas
 import openpyxl
+import synapseclient
 
 print(f"[OK] pandas {pandas.__version__}")
 print(f"[OK] openpyxl {openpyxl.__version__}")
+print(f"[OK] synapseclient {synapseclient.__version__}")
 PY
 Rscript -e 'cat("[OK] R ", as.character(getRversion()), "\n", sep = ""); packageVersion("data.table")'
 
