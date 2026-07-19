@@ -42,11 +42,33 @@ cat("[OK] data.table:", as.character(packageVersion("data.table")), "\n")
 echo "[TEST] Python syntax"
 "${PYTHON_BIN}" -m py_compile \
   scripts/00_run_full_audit_final.py \
+  scripts/build_ukb_ppp_download_manifest.py \
+  scripts/synapse_metadata.py \
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
   scripts/colab_download_gigastroke_gwas.py
 
 echo "[TEST] Fixture config JSON"
 "${PYTHON_BIN}" -m json.tool "${FIXTURE_CONFIG}" >/dev/null
+
+echo "[TEST] Build manifest from committed Synapse metadata fixture"
+MANIFEST_FIXTURE_OUTPUT="${SMOKE_ROOT}/ukb_ppp_download_manifest.tsv"
+mkdir -p "${SMOKE_ROOT}"
+"${PYTHON_BIN}" scripts/build_ukb_ppp_download_manifest.py \
+  --synapse-metadata-file tests/fixtures/synapse_metadata.tsv \
+  --output "${MANIFEST_FIXTURE_OUTPUT}"
+"${PYTHON_BIN}" - "${MANIFEST_FIXTURE_OUTPUT}" <<'PY'
+import csv
+import sys
+
+with open(sys.argv[1], newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+assert [row["synapse_id"] for row in rows] == ["syn1001", "syn1002"]
+assert [row["expected_size_bytes"] for row in rows] == ["", ""]
+assert [row["ancestry"] for row in rows] == ["EUR", "EAS"]
+assert [row["synapse_parent_id"] for row in rows] == ["syn51365303", "syn51365306"]
+assert all(row["url"].startswith("https://www.synapse.org/Synapse:syn") for row in rows)
+print("[OK] Synapse metadata manifest fixture")
+PY
 
 echo "[TEST] Materialize tiny raw tar fixtures under ${SMOKE_RAW_DIR}"
 rm -rf "${SMOKE_ROOT}"
