@@ -145,6 +145,25 @@ The runner flushes current batch and phase messages to stdout. If Colab's
 `%%bash` output remains buffered in the notebook UI, use `python3 -u` in place
 of `python3` in the same command.
 
+### Reuse existing raw archives
+
+If the required archives already exist under an `IS_Analysis` raw-data folder,
+point `--base` at that folder instead of copying them. The runner checks the
+ancestry-specific source path (`EUR/` or `EAS/`), requires a non-empty valid tar,
+and reuses it. For a valid existing archive it skips the selected file's Synapse
+metadata request and download, then performs the normal tar/checksum validation
+in the batch workflow (including any checksum already stored in the manifest).
+For example, when raw data are in the Colab clone:
+
+```bash
+--base "${CODE_ROOT}/data/rawdata/pqtl/selected_targets"
+```
+
+Keep `--download-manifest` when lifecycle tracking or raw cleanup is required;
+the manifest source filename must match the existing archive filename. Without a
+manifest, the runner can discover paired EUR/EAS raw archives, but cannot use
+`--delete-raw-after-processing` because it has no lifecycle record.
+
 To safely resume a single failed batch, use `--only-batch batch_003`. To only
 download and validate archives, add `--download-only` with `--run`.
 

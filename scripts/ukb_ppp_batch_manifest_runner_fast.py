@@ -97,13 +97,24 @@ def read_download_manifest(path: Path, pd: Any) -> Any:
 
 
 def hydrate_selected_synapse_metadata(
-    sources: list[dict[str, str]], manifest: Any, manifest_path: Path,
+    sources: list[dict[str, str]], manifest: Any, manifest_path: Path, base: Path,
 ) -> list[dict[str, str]]:
-    """Look up checksums only for the current batch's Synapse source files."""
+    """Look up metadata only for selected files not already valid in ``base``."""
+    reusable = 0
+
+    def has_reusable_raw(row: dict[str, str]) -> bool:
+        source_file = row.get("source_file", "")
+        path = base / row.get("ancestry", "") / source_file
+        return bool(source_file and path.exists() and path.stat().st_size > 0 and tarfile.is_tarfile(path))
+
     pending = [
         row["synapse_id"] for row in sources
         if row.get("synapse_id", "") and (not row.get("expected_size_bytes", "") or not row.get("md5", ""))
+        and not has_reusable_raw(row)
     ]
+    reusable = sum(1 for row in sources if has_reusable_raw(row))
+    if reusable:
+        print(f"[INFO] Reusing {reusable} valid existing raw archive(s); skipping Synapse metadata lookup", flush=True)
     if not pending:
         return sources
     from synapse_metadata import fetch_file_metadata_many, synapse_token
@@ -395,7 +406,7 @@ def main() -> None:
         if args.run and download_manifest is not None:
             print(f"[INFO] Batch {position}/{len(selected_batches)}: looking up selected Synapse metadata", flush=True)
             try:
-                source_rows = hydrate_selected_synapse_metadata(source_rows, download_manifest, Path(args.download_manifest))
+                source_rows = hydrate_selected_synapse_metadata(source_rows, download_manifest, Path(args.download_manifest), base)
             except (RuntimeError, ValueError, OSError) as error:
                 batch_df.loc[index, "status"] = "metadata_fetch_failed"
                 write_atomic(batch_df, manifest_path)
