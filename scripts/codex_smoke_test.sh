@@ -46,6 +46,7 @@ echo "[TEST] Python syntax"
   scripts/synapse_metadata.py \
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
   scripts/colab_download_gigastroke_gwas.py \
+  scripts/configure_gigastroke_outcomes.py \
   workflow/gigastroke_outcome_adapter.py
 
 echo "[TEST] GIGASTROKE outcome adapter fixture"
