@@ -4,7 +4,9 @@
     "chain": "../references/grch37_to_grch38.chain",
     "chain_sha256": "REPLACE_WITH_VERIFIED_SHA256",
     "target_reference": "../references/GRCh38.fa",
-    "target_reference_sha256": "REPLACE_WITH_VERIFIED_SHA256"
+    "target_reference_sha256": "REPLACE_WITH_VERIFIED_SHA256",
+    "source_reference": "../references/GRCh37.fa",
+    "source_reference_sha256": "REPLACE_WITH_VERIFIED_SHA256"
   },
   "selection": {
     "eur_discovery": "gigastroke_is_EUR",

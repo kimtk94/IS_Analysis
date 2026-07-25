@@ -135,7 +135,7 @@ def pick(row: dict[str, str], names: list[str], required: bool = True) -> str:
     return ""
 
 
-def source_variant(row: dict[str, str], columns: dict[str, list[str]]) -> tuple[str, str, str]:
+def source_variant(row: dict[str, str], columns: dict[str, list[str]], source_fasta: Fasta) -> tuple[str, str, str]:
     """Return source variant ID/ref/alt, deriving alleles from a coordinate ID.
 
     GIGASTROKE/GWAS Catalog files do not consistently expose separate REF and
@@ -144,7 +144,7 @@ def source_variant(row: dict[str, str], columns: dict[str, list[str]]) -> tuple[
     We only accept a parsed ID when its chromosome and position agree with the
     row, avoiding silent use of a harmonized ID from a different build.
     """
-    variant_id = pick(row, columns["variant_id"])
+    variant_id = pick(row, columns.get("variant_id", []), required=False)
     ref = pick(row, columns.get("ref", []), required=False).upper()
     alt = pick(row, columns.get("alt", []), required=False).upper()
     if ref and alt:
@@ -164,19 +164,32 @@ def source_variant(row: dict[str, str], columns: dict[str, list[str]]) -> tuple[
                 and re.fullmatch(r"[ACGTN]+", encoded_ref.upper())
                 and re.fullmatch(r"[ACGTN]+", encoded_alt.upper())):
             return variant_id, encoded_ref.upper(), encoded_alt.upper()
-    raise ValueError("missing ref/alt and no build-matching chromosome:position:ref:alt variant ID")
+    # The published GIGASTROKE tables can contain only effect/other alleles. In
+    # that case the GRCh37 FASTA, not effect direction, determines REF and ALT.
+    effect = pick(row, columns["effect_allele"]).upper()
+    other = pick(row, columns["other_allele"]).upper()
+    if not all(re.fullmatch(r"[ACGTN]+", allele) for allele in (effect, other)) or effect == other:
+        raise ValueError("source_reference_allele_mismatch")
+    effect_matches = source_fasta.bases(chrom, position, len(effect)) == effect
+    other_matches = source_fasta.bases(chrom, position, len(other)) == other
+    if effect_matches == other_matches:
+        raise ValueError("source_reference_allele_mismatch")
+    return (variant_id, effect, other) if effect_matches else (variant_id, other, effect)
 
 
 def run(config_path: Path, output_override: Path | None = None) -> None:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     root = config_path.parent
     resolve = lambda p: (root / p).resolve() if not Path(p).is_absolute() else Path(p)
-    chain_path, reference_path = resolve(config["liftover"]["chain"]), resolve(config["liftover"]["target_reference"])
-    for path, key in ((chain_path, "chain_sha256"), (reference_path, "target_reference_sha256")):
+    chain_path = resolve(config["liftover"]["chain"])
+    source_reference_path = resolve(config["liftover"]["source_reference"])
+    reference_path = resolve(config["liftover"]["target_reference"])
+    for path, key in ((chain_path, "chain_sha256"), (source_reference_path, "source_reference_sha256"),
+                      (reference_path, "target_reference_sha256")):
         expected = config["liftover"][key].lower()
         if sha256(path) != expected:
             raise SystemExit(f"checksum verification failed for {path}")
-    chain, fasta = Chain(chain_path), Fasta(reference_path)
+    chain, source_fasta, fasta = Chain(chain_path), Fasta(source_reference_path), Fasta(reference_path)
     outdir = output_override.resolve() if output_override else resolve(config["output_dir"])
     outdir.mkdir(parents=True, exist_ok=True)
     selected = {config["selection"]["eur_discovery"], *config["selection"]["eas_replication_subtypes"]}
@@ -201,7 +214,7 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
             for line_no, row in enumerate(reader, 2):
                 try:
                     c = chromosome(pick(row, dataset["columns"]["chromosome"])); p = int(pick(row, dataset["columns"]["position"]))
-                    vid, ref, alt = source_variant(row, dataset["columns"])
+                    vid, ref, alt = source_variant(row, dataset["columns"], source_fasta)
                     mappings = chain.map(c, p)
                     if len(mappings) != 1:
                         raise ValueError("unmapped" if not mappings else "multi_mapped")
@@ -218,7 +231,7 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
                     accepted.append(dict(zip(CANONICAL, [dataset["id"], dataset["ancestry"], dataset["outcome"], dataset["role"], dataset["source_build"], "GRCh38", c, p, ref, alt, vid, tc, tp, tref, talt, pick(row, col["effect_allele"]), pick(row, col["other_allele"]), pick(row, col["beta"]), pick(row, col["se"]), pick(row, col["p_value"]), pick(row, col.get("eaf", []), False), pick(row, col.get("sample_size", []), False)])))
                 except (ValueError, KeyError) as error:
                     reason = str(error)
-                    if reason not in {"unmapped", "multi_mapped", "duplicate", "reference_allele_mismatch"}:
+                    if reason not in {"unmapped", "multi_mapped", "duplicate", "reference_allele_mismatch", "source_reference_allele_mismatch"}:
                         reason = "invalid_input:" + reason
                     rejected.append({"dataset_id": dataset["id"], "source_line": line_no, "reason": reason,
                                      "source_chromosome": row.get(dataset["columns"]["chromosome"][0], ""), "source_position": row.get(dataset["columns"]["position"][0], ""),
@@ -228,7 +241,7 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
         write_tsv(reject, ["dataset_id", "source_line", "reason", "source_chromosome", "source_position", "source_ref", "source_alt", "source_variant_id"], rejected)
         counts = defaultdict(int)
         for item in rejected: counts[item["reason"]] += 1
-        manifests.append({"dataset_id": dataset["id"], "ancestry": dataset["ancestry"], "outcome": dataset["outcome"], "role": dataset["role"], "source_build": dataset["source_build"], "target_build": "GRCh38", "input": str(source), "output": str(output), "accepted": len(accepted), "rejected": len(rejected), "rejection_counts": dict(counts), "chain": str(chain_path), "chain_sha256": sha256(chain_path), "target_reference": str(reference_path), "target_reference_sha256": sha256(reference_path)})
+        manifests.append({"dataset_id": dataset["id"], "ancestry": dataset["ancestry"], "outcome": dataset["outcome"], "role": dataset["role"], "source_build": dataset["source_build"], "target_build": "GRCh38", "input": str(source), "output": str(output), "accepted": len(accepted), "rejected": len(rejected), "rejection_counts": dict(counts), "chain": str(chain_path), "chain_sha256": sha256(chain_path), "source_reference": str(source_reference_path), "source_reference_sha256": sha256(source_reference_path), "target_reference": str(reference_path), "target_reference_sha256": sha256(reference_path)})
     (outdir / "dataset_manifest.json").write_text(json.dumps(manifests, indent=2) + "\n", encoding="utf-8")
 
 

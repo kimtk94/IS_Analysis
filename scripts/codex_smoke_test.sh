@@ -66,18 +66,19 @@ with (root / "gigastroke_is_EUR.canonical.tsv").open(newline="", encoding="utf-8
 assert len(rows) == 3
 assert rows[0]["source_chromosome"] == "1" and rows[0]["chromosome"] == "1"
 assert rows[0]["source_variant_id"] == "rs-good"
-derived = next(row for row in rows if row["source_variant_id"] == "chr1:6:A:T")
+derived = next(row for row in rows if row["source_position"] == "6")
+assert derived["source_variant_id"] == ""
 assert (derived["source_ref"], derived["source_alt"], derived["ref"], derived["alt"]) == ("A", "T", "A", "T")
 indel = next(row for row in rows if row["source_variant_id"] == "rs-indel")
 assert (indel["source_position"], indel["source_ref"], indel["source_alt"]) == ("11", "AA", "A")
 assert (indel["position"], indel["ref"], indel["alt"]) == ("1", "AA", "A")
 with (root / "gigastroke_is_EUR.rejected.tsv").open(newline="", encoding="utf-8") as handle:
     rejects = list(csv.DictReader(handle, delimiter="\t"))
-assert {row["reason"] for row in rejects} == {"unmapped", "multi_mapped", "duplicate", "reference_allele_mismatch"}
+assert {row["reason"] for row in rejects} == {"unmapped", "multi_mapped", "duplicate", "reference_allele_mismatch", "source_reference_allele_mismatch"}
 manifest = json.loads((root / "dataset_manifest.json").read_text(encoding="utf-8"))
 assert {(item["ancestry"], item["role"], item["source_build"], item["target_build"]) for item in manifest} == {
     ("EUR", "discovery", "GRCh37", "GRCh38"), ("EAS", "replication_subtype", "GRCh37", "GRCh38")}
-assert all(len(item["chain_sha256"]) == 64 and len(item["target_reference_sha256"]) == 64 for item in manifest)
+assert all(len(item["chain_sha256"]) == 64 and len(item["source_reference_sha256"]) == 64 and len(item["target_reference_sha256"]) == 64 for item in manifest)
 print("[OK] liftover, normalization, provenance, selection, and reasoned exclusions")
 PY
 

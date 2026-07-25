@@ -15,7 +15,8 @@ Run these as separate stages. All commands and generated data use
 
 ### 0. Reference setup (run once)
 
-The adapter uses the official UCSC hg38 reference pair. Download and verify it
+The adapter uses the official UCSC hg19 source FASTA, hg38 target FASTA, and
+matching chain. Download and verify them
 with the committed setup helper:
 
 ```bash
@@ -25,14 +26,15 @@ bash scripts/colab_download_grch38_liftover_references.sh
 ```
 
 The helper downloads `hg38ToHg19.over.chain.gz` from the UCSC hg38 liftOver
-directory and `hg38.fa.gz` from the UCSC hg38 bigZips directory, then verifies
-both against the MD5 lists published in those same directories. UCSC chain
+directory, `hg19.fa.gz` from UCSC hg19 bigZips, and `hg38.fa.gz` from UCSC hg38
+bigZips, then verifies all three against the MD5 lists published in those same directories. UCSC chain
 filenames are `targetToQuery`: `hg38ToHg19` is therefore the chain whose query
 coordinates are hg19/GRCh37 and whose target coordinates are hg38/GRCh38. The
 helper writes the decompressed files expected by the config commands:
 
 ```text
 /content/drive/MyDrive/IS_Analysis_V2/references/grch37_to_grch38.chain
+/content/drive/MyDrive/IS_Analysis_V2/references/GRCh37.fa
 /content/drive/MyDrive/IS_Analysis_V2/references/GRCh38.fa
 ```
 
@@ -58,6 +60,7 @@ paths plus the locally calculated reference SHA-256 values:
 python3 scripts/configure_gigastroke_outcomes.py \
   --project-root "$PROJECT_ROOT" \
   --chain "$PROJECT_ROOT/references/grch37_to_grch38.chain" \
+  --source-reference "$PROJECT_ROOT/references/GRCh37.fa" \
   --reference "$PROJECT_ROOT/references/GRCh38.fa" \
   --output "$PROJECT_ROOT/config/gigastroke_outcomes.json" \
   --eur-discovery gigastroke_is_EUR \
@@ -92,11 +95,13 @@ Unmapped, multi-mapped, duplicate, and target-reference-mismatch records never
 enter the canonical analysis input. The manifest records both builds and the
 verified chain/reference paths and digests.
 
-Some GIGASTROKE files omit separate `ref`/`alt` columns. In that case the
-adapter extracts REF/ALT from a `chromosome:position:ref:alt` or
-`chromosome_position_ref_alt` source variant ID. It accepts the parsed alleles
-only when the encoded chromosome and position exactly match the row; otherwise
-the row is rejected rather than guessing REF/ALT from effect/other alleles.
+Some GIGASTROKE files contain only `effect_allele` and `other_allele`, with no
+REF/ALT or variant ID. The adapter first tries a build-matching
+`chromosome:position:ref:alt` source variant ID. If none exists, it compares
+both reported alleles with the verified GRCh37 FASTA and assigns REF only when
+exactly one allele matches the source reference. It never assumes that effect
+allele means ALT. Rows for which REF cannot be determined unambiguously are
+excluded as `source_reference_allele_mismatch`.
 
 Production runs should use an authoritative GRCh37-to-GRCh38 chain and matching
 GRCh38 FASTA from the same controlled reference release. Record their published

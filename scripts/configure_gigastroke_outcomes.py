@@ -25,6 +25,7 @@ def main() -> None:
         help="Project root (default: PROJECT_ROOT or /content/drive/MyDrive/IS_Analysis_V2).",
     )
     parser.add_argument("--chain", required=True, type=Path)
+    parser.add_argument("--source-reference", required=True, type=Path)
     parser.add_argument("--reference", required=True, type=Path)
     parser.add_argument("--template", type=Path, default=Path("config/gigastroke_outcomes.example.json"))
     parser.add_argument("--output", type=Path, default=Path("config/gigastroke_outcomes.json"))
@@ -35,8 +36,9 @@ def main() -> None:
 
     project_root = args.project_root.resolve()
     raw = project_root / "data/rawdata/outcome/gigastroke_gwas_catalog"
-    chain, reference = args.chain.resolve(), args.reference.resolve()
-    for label, path in (("raw-data directory", raw), ("chain", chain), ("reference", reference)):
+    chain, source_reference, reference = args.chain.resolve(), args.source_reference.resolve(), args.reference.resolve()
+    for label, path in (("raw-data directory", raw), ("chain", chain),
+                        ("source reference", source_reference), ("target reference", reference)):
         if not path.exists():
             raise SystemExit(f"{label} does not exist: {path}")
 
@@ -44,6 +46,7 @@ def main() -> None:
     config["output_dir"] = str(project_root / "data/standardized/outcome/gigastroke")
     config["liftover"] = {
         "chain": str(chain), "chain_sha256": digest(chain),
+        "source_reference": str(source_reference), "source_reference_sha256": digest(source_reference),
         "target_reference": str(reference), "target_reference_sha256": digest(reference),
     }
     config["selection"] = {
