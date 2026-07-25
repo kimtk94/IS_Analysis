@@ -31,10 +31,3 @@ single EUR discovery and desired EAS replication/subtype IDs under `selection`,
 and replace the reference paths and placeholder SHA-256 values with verified
 local reference artifacts. Analysis is run separately from the Colab downloader;
 see `workflow/README.md`.
-
-## LD and fine-mapping
-
-`ld_finemap.example.json` defines the Stage 04 ancestry-specific LD contract.
-Copy it to a run-specific config and replace every reference path and provenance
-description with locally verified assets. EUR and EAS contracts are both
-mandatory; panel substitution across ancestries is not supported.

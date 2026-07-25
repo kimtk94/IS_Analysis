@@ -13,6 +13,29 @@ run only after that setup stage.
 Run these as separate stages. All commands and generated data use
 `/content/drive/MyDrive/IS_Analysis_V2` as the project root.
 
+### 0. Reference setup (run once)
+
+The adapter uses the official UCSC hg38 reference pair. Download and verify it
+with the committed setup helper:
+
+```bash
+export PROJECT_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+cd "$PROJECT_ROOT"
+bash scripts/colab_download_grch38_liftover_references.sh
+```
+
+The helper downloads `hg38ToHg19.over.chain.gz` from the UCSC hg38 liftOver
+directory and `hg38.fa.gz` from the UCSC hg38 bigZips directory, then verifies
+both against the MD5 lists published in those same directories. UCSC chain
+filenames are `targetToQuery`: `hg38ToHg19` is therefore the chain whose query
+coordinates are hg19/GRCh37 and whose target coordinates are hg38/GRCh38. The
+helper writes the decompressed files expected by the config commands:
+
+```text
+/content/drive/MyDrive/IS_Analysis_V2/references/grch37_to_grch38.chain
+/content/drive/MyDrive/IS_Analysis_V2/references/GRCh38.fa
+```
+
 ### 1. Download stage
 
 ```bash
@@ -27,8 +50,7 @@ This downloads the eight EUR/EAS ischemic-stroke and subtype files beneath
 
 ### 2. Create the real-data config
 
-Obtain an authoritative GRCh37-to-GRCh38 UCSC chain and its matching GRCh38
-FASTA during environment setup, then provide their local paths. The helper
+Use the chain and matching FASTA installed in stage 0. The config helper
 discovers the downloaded server-controlled suffixes and writes absolute input
 paths plus the locally calculated reference SHA-256 values:
 
@@ -73,23 +95,3 @@ verified chain/reference paths and digests.
 Production runs should use an authoritative GRCh37-to-GRCh38 chain and matching
 GRCh38 FASTA from the same controlled reference release. Record their published
 digests in config rather than copying the tiny synthetic review fixtures.
-
-## Ancestry-specific LD and fine-mapping stage
-
-`ancestry_ld_finemap.py` is the independent Stage 04 LD/fine-mapping workflow.
-It requires both EUR and EAS reference contracts, including panel name, build,
-ancestry, sample provenance, matrix, and allele metadata. It will not fall back
-to EUR LD for an EAS locus. Start from `config/ld_finemap.example.json` and run:
-
-```bash
-python3 workflow/ancestry_ld_finemap.py --config config/ld_finemap.json
-```
-
-The configured summary-statistics file must contain every variant in each locus,
-not only significant instruments. Instrument p-value filtering is used solely
-for ancestry-matched clumping. Fine-mapping uses all aligned locus variants,
-creates ancestry-specific PIPs/credible sets first, and then applies the
-predeclared cross-ancestry integration method. The QC table gates missingness,
-allele alignment, positive-definite LD, effective sample size, and locus
-coverage. The committed synthetic fixture deliberately gives EUR and EAS
-different variant sets and matrices.

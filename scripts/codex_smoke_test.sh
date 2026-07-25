@@ -40,6 +40,7 @@ cat("[OK] data.table:", as.character(packageVersion("data.table")), "\n")
 ' || report_env_not_ready "Missing R package data.table. Run scripts/setup_codex_env.sh during setup, not during review."
 
 echo "[TEST] Python syntax"
+bash -n scripts/colab_download_grch38_liftover_references.sh
 "${PYTHON_BIN}" -m py_compile \
   scripts/00_run_full_audit_final.py \
   scripts/build_ukb_ppp_download_manifest.py \
@@ -47,8 +48,7 @@ echo "[TEST] Python syntax"
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
   scripts/colab_download_gigastroke_gwas.py \
   scripts/configure_gigastroke_outcomes.py \
-  workflow/gigastroke_outcome_adapter.py \
-  workflow/ancestry_ld_finemap.py
+  workflow/gigastroke_outcome_adapter.py
 
 echo "[TEST] GIGASTROKE outcome adapter fixture"
 GIGASTROKE_OUT="${SMOKE_ROOT}/gigastroke"
@@ -77,40 +77,6 @@ assert {(item["ancestry"], item["role"], item["source_build"], item["target_buil
     ("EUR", "discovery", "GRCh37", "GRCh38"), ("EAS", "replication_subtype", "GRCh37", "GRCh38")}
 assert all(len(item["chain_sha256"]) == 64 and len(item["target_reference_sha256"]) == 64 for item in manifest)
 print("[OK] liftover, normalization, provenance, selection, and reasoned exclusions")
-PY
-
-echo "[TEST] Ancestry-specific LD and fine-mapping fixture"
-LD_FINEMAP_OUT="${SMOKE_ROOT}/ld_finemap"
-"${PYTHON_BIN}" workflow/ancestry_ld_finemap.py \
-  --config tests/fixtures/ld_finemap/config.json --output-dir "${LD_FINEMAP_OUT}"
-"${PYTHON_BIN}" - "${LD_FINEMAP_OUT}" <<'PY'
-import csv
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-def rows(name):
-    with (root / name).open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle, delimiter="\t"))
-
-fine = rows("fine_mapping_results.tsv")
-eur = [x for x in fine if x["ancestry"] == "EUR"]
-eas = [x for x in fine if x["ancestry"] == "EAS"]
-cross = [x for x in fine if x["ancestry"] == "CROSS"]
-assert {x["variant_id"] for x in eur} == {"rsShared1", "rsShared2", "rsEurOnly"}
-assert {x["variant_id"] for x in eas} == {"rsShared1", "rsShared2", "rsEasOnly"}
-assert {x["ld_panel"] for x in eur} == {"SYNTHETIC_EUR_PANEL"}
-assert {x["ld_panel"] for x in eas} == {"SYNTHETIC_EAS_PANEL"}
-assert {x["variant_id"] for x in cross} == {"rsShared1", "rsShared2"}
-assert all(x["integrated"] == "True" for x in cross)
-gates = rows("ld_qc_gates.tsv")
-assert {x["status"] for x in gates} == {"PASS"}
-assert {(x["ancestry"], x["ld_panel"]) for x in gates} == {
-    ("EUR", "SYNTHETIC_EUR_PANEL"), ("EAS", "SYNTHETIC_EAS_PANEL")}
-instruments = rows("independent_instruments.tsv")
-leads = rows("lead_only_instruments.tsv")
-assert len(leads) == 2 and len(instruments) > len(leads)
-print("[OK] distinct EUR/EAS LD, full-locus fine-mapping, gates, clumping, and integration")
 PY
 
 echo "[TEST] Fixture config JSON"
