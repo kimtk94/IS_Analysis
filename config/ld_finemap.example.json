@@ -1,0 +1,35 @@
+{
+  "full_summary_statistics": "../data/standardized/loci/full_summary.tsv",
+  "output_dir": "../results/ld_finemap",
+  "ld_reference_panels": {
+    "EUR": {
+      "name": "1000 Genomes Phase 3 EUR",
+      "genome_build": "GRCh38",
+      "ancestry": "EUR",
+      "sample_provenance": "503 unrelated EUR samples from the 1000 Genomes Phase 3 release; locally lifted/normalized to GRCh38",
+      "matrix": "../references/ld/eur/locus.ld.tsv",
+      "variants": "../references/ld/eur/locus.variants.tsv"
+    },
+    "EAS": {
+      "name": "1000 Genomes Phase 3 EAS",
+      "genome_build": "GRCh38",
+      "ancestry": "EAS",
+      "sample_provenance": "504 unrelated EAS samples from the 1000 Genomes Phase 3 release; locally lifted/normalized to GRCh38",
+      "matrix": "../references/ld/eas/locus.ld.tsv",
+      "variants": "../references/ld/eas/locus.variants.tsv"
+    }
+  },
+  "methods": {
+    "instrument_p_threshold": 0.000001,
+    "clump_r2": 0.01,
+    "prior_effect_variance": 0.04,
+    "credible_set_probability": 0.95,
+    "cross_ancestry_integration": "normalized_pip_product"
+  },
+  "gates": {
+    "max_variant_missing_rate": 0.2,
+    "matrix_tolerance": 0.00000001,
+    "min_effective_sample_size": 1000,
+    "min_locus_coverage": 0.8
+  }
+}

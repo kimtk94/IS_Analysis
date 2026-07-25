@@ -1,0 +1,4 @@
+variant_id	rsShared1	rsShared2	rsEasOnly
+rsShared1	1	0.01	-0.2
+rsShared2	0.01	1	0.15
+rsEasOnly	-0.2	0.15	1
