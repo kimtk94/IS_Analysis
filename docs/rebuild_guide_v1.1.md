@@ -348,13 +348,42 @@ raw가 처리 후 삭제된 경우 processed output checksum과 run manifest가 
 - GRCh37 → GRCh38 liftover를 수행한다.
 - mapping 실패와 allele/ref mismatch를 보고한다.
 
-### Stage 04 — cis instrument selection
+### Stage 04A — ancestry별 cis instrument selection
 
 - gene coordinate reference를 필수로 사용한다.
 - ±1 Mb cis window를 명시적으로 적용한다.
 - p-value, MAF, imputation INFO, F-statistic을 순서대로 적용한다.
-- EUR discovery용 LD panel로 clumping한다.
-- 독립 instrument 전체와 lead-only 보조 테이블을 모두 저장한다.
+- 각 exposure ancestry와 정확히 일치하는 LD panel로 clumping한다. EUR 자료에는 EUR LD만,
+  EAS 자료에는 EAS LD만 허용하며 다른 ancestry panel로 fallback하지 않는다.
+- `independent_instruments.tsv`에는 clumping 후 독립 instrument 전체를 저장하고,
+  `lead_only_instruments.tsv`에는 locus별 최저 p-value variant만 보조 결과로 저장한다.
+- config의 ancestry별 LD contract에는 panel 이름, genome build, ancestry label, sample 수와
+  cohort/release provenance, matrix 및 variant metadata 경로를 필수로 기록한다.
+
+### Stage 04B — ancestry별 LD QC 및 fine-mapping
+
+입력은 Stage 02/03에서 보존한 **locus 전체 summary statistics**와 같은 ancestry의 LD
+matrix다. Stage 04A의 p-value/F-statistic-filtered instrument 파일을 fine-mapping 입력으로
+사용해서는 안 된다. 구현 entry point는 `workflow/ancestry_ld_finemap.py`이며 Stage 04A의
+clumping 산출물 및 Stage 05 이후 단계와 독립적으로 checkpoint한다.
+
+실행 순서와 contract:
+
+1. EUR과 EAS 각각에서 allele을 LD variant metadata에 정렬하고 ancestry별 matrix를 읽는다.
+2. ancestry별 signal의 PIP와 사전 지정한 posterior mass(기본 0.95) credible set을 먼저 만든다.
+3. ancestry별 결과를 변경하지 않은 채 config에 사전 지정한
+   `normalized_pip_product`로 공통 variant의 PIP를 통합한다. 공통 variant가 없으면 통합
+   행을 생성하지 않는다.
+4. locus × ancestry마다 variant 누락률, allele alignment 실패 수, LD matrix 대칭성/대각선과
+   positive-definiteness, 최소 effective sample size, full-locus coverage를 gate로 기록한다.
+   gate 실패 locus는 fine-mapping이나 통합 결과에 포함하지 않는다.
+5. 최종 long-format 결과에는 `locus`, `signal_id`, `ancestry`, `credible_set_size`,
+   `variant_id`, `variant_pip`, `in_credible_set`, `integrated`, `integration_method`,
+   `ld_panel`을 포함한다.
+
+EUR/EAS의 variant 구성이 다른 synthetic fixture를 필수 회귀 테스트로 유지한다. 테스트는
+각 ancestry 고유 variant가 해당 결과에만 존재하고, EAS 결과와 QC manifest가 EAS panel
+이름을 기록하는지 확인하여 EUR LD의 암묵적 재사용을 차단한다.
 
 ### Stage 05 — harmonization
 
