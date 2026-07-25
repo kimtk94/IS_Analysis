@@ -22,3 +22,12 @@ In a prepared Colab setup environment, run the final audit with:
 ```bash
 python3 scripts/00_run_full_audit_final.py --config config/audit_config_colab_drive.json
 ```
+
+## GIGASTROKE outcomes
+
+`gigastroke_outcomes.example.json` enumerates all downloaded EUR/EAS ischemic
+stroke and subtype datasets. Copy it to `gigastroke_outcomes.json`, select the
+single EUR discovery and desired EAS replication/subtype IDs under `selection`,
+and replace the reference paths and placeholder SHA-256 values with verified
+local reference artifacts. Analysis is run separately from the Colab downloader;
+see `workflow/README.md`.
