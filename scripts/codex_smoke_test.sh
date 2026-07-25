@@ -63,9 +63,11 @@ from pathlib import Path
 root = Path(sys.argv[1])
 with (root / "gigastroke_is_EUR.canonical.tsv").open(newline="", encoding="utf-8") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
-assert len(rows) == 2
+assert len(rows) == 3
 assert rows[0]["source_chromosome"] == "1" and rows[0]["chromosome"] == "1"
 assert rows[0]["source_variant_id"] == "rs-good"
+derived = next(row for row in rows if row["source_variant_id"] == "chr1:6:A:T")
+assert (derived["source_ref"], derived["source_alt"], derived["ref"], derived["alt"]) == ("A", "T", "A", "T")
 indel = next(row for row in rows if row["source_variant_id"] == "rs-indel")
 assert (indel["source_position"], indel["source_ref"], indel["source_alt"]) == ("11", "AA", "A")
 assert (indel["position"], indel["ref"], indel["alt"]) == ("1", "AA", "A")

@@ -12,6 +12,7 @@ import csv
 import gzip
 import hashlib
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -134,6 +135,38 @@ def pick(row: dict[str, str], names: list[str], required: bool = True) -> str:
     return ""
 
 
+def source_variant(row: dict[str, str], columns: dict[str, list[str]]) -> tuple[str, str, str]:
+    """Return source variant ID/ref/alt, deriving alleles from a coordinate ID.
+
+    GIGASTROKE/GWAS Catalog files do not consistently expose separate REF and
+    ALT columns. Their variant_id/hm_variant_id commonly encodes
+    chromosome_position_ref_alt (colon and underscore separators are accepted).
+    We only accept a parsed ID when its chromosome and position agree with the
+    row, avoiding silent use of a harmonized ID from a different build.
+    """
+    variant_id = pick(row, columns["variant_id"])
+    ref = pick(row, columns.get("ref", []), required=False).upper()
+    alt = pick(row, columns.get("alt", []), required=False).upper()
+    if ref and alt:
+        return variant_id, ref, alt
+
+    chrom = chromosome(pick(row, columns["chromosome"]))
+    position = int(pick(row, columns["position"]))
+    candidates = columns.get("ref_alt_variant_id", []) + columns["variant_id"]
+    for name in dict.fromkeys(candidates):
+        encoded = row.get(name, "")
+        fields = re.split(r"[:_]", encoded)
+        if len(fields) < 4:
+            continue
+        encoded_chrom, encoded_pos, encoded_ref, encoded_alt = fields[-4:]
+        if (chromosome(encoded_chrom) == chrom and encoded_pos.isdigit()
+                and int(encoded_pos) == position
+                and re.fullmatch(r"[ACGTN]+", encoded_ref.upper())
+                and re.fullmatch(r"[ACGTN]+", encoded_alt.upper())):
+            return variant_id, encoded_ref.upper(), encoded_alt.upper()
+    raise ValueError("missing ref/alt and no build-matching chromosome:position:ref:alt variant ID")
+
+
 def run(config_path: Path, output_override: Path | None = None) -> None:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     root = config_path.parent
@@ -168,8 +201,7 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
             for line_no, row in enumerate(reader, 2):
                 try:
                     c = chromosome(pick(row, dataset["columns"]["chromosome"])); p = int(pick(row, dataset["columns"]["position"]))
-                    ref = pick(row, dataset["columns"]["ref"]).upper(); alt = pick(row, dataset["columns"]["alt"]).upper()
-                    vid = pick(row, dataset["columns"]["variant_id"])
+                    vid, ref, alt = source_variant(row, dataset["columns"])
                     mappings = chain.map(c, p)
                     if len(mappings) != 1:
                         raise ValueError("unmapped" if not mappings else "multi_mapped")

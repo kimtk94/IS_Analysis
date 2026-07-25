@@ -8,27 +8,109 @@
   },
   "selection": {
     "eur_discovery": "gigastroke_is_EUR",
-    "eas_replication_subtypes": ["gigastroke_las_EAS"]
+    "eas_replication_subtypes": [
+      "gigastroke_las_EAS"
+    ]
   },
   "datasets": [
     {
-      "id": "gigastroke_is_EUR", "input": "eur.tsv", "ancestry": "EUR",
-      "outcome": "ischemic_stroke", "role": "discovery", "source_build": "GRCh37",
+      "id": "gigastroke_is_EUR",
+      "input": "eur.tsv",
+      "ancestry": "EUR",
+      "outcome": "ischemic_stroke",
+      "role": "discovery",
+      "source_build": "GRCh37",
       "columns": {
-        "chromosome": ["chromosome"], "position": ["base_pair_location"], "ref": ["ref"], "alt": ["alt"],
-        "variant_id": ["variant_id"], "effect_allele": ["effect_allele"], "other_allele": ["other_allele"],
-        "beta": ["beta"], "se": ["standard_error"], "p_value": ["p_value"],
-        "eaf": ["effect_allele_frequency"], "sample_size": ["sample_size"]
+        "chromosome": [
+          "chromosome"
+        ],
+        "position": [
+          "base_pair_location"
+        ],
+        "ref": [
+          "ref"
+        ],
+        "alt": [
+          "alt"
+        ],
+        "variant_id": [
+          "variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele"
+        ],
+        "other_allele": [
+          "other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "sample_size"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
       }
     },
     {
-      "id": "gigastroke_las_EAS", "input": "eas_las.tsv", "ancestry": "EAS",
-      "outcome": "large_artery_stroke", "role": "replication_subtype", "source_build": "GRCh37",
+      "id": "gigastroke_las_EAS",
+      "input": "eas_las.tsv",
+      "ancestry": "EAS",
+      "outcome": "large_artery_stroke",
+      "role": "replication_subtype",
+      "source_build": "GRCh37",
       "columns": {
-        "chromosome": ["chromosome"], "position": ["base_pair_location"], "ref": ["ref"], "alt": ["alt"],
-        "variant_id": ["variant_id"], "effect_allele": ["effect_allele"], "other_allele": ["other_allele"],
-        "beta": ["beta"], "se": ["standard_error"], "p_value": ["p_value"],
-        "eaf": ["effect_allele_frequency"], "sample_size": ["sample_size"]
+        "chromosome": [
+          "chromosome"
+        ],
+        "position": [
+          "base_pair_location"
+        ],
+        "ref": [
+          "ref"
+        ],
+        "alt": [
+          "alt"
+        ],
+        "variant_id": [
+          "variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele"
+        ],
+        "other_allele": [
+          "other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "sample_size"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
       }
     }
   ]

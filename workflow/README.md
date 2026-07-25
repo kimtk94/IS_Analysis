@@ -92,6 +92,12 @@ Unmapped, multi-mapped, duplicate, and target-reference-mismatch records never
 enter the canonical analysis input. The manifest records both builds and the
 verified chain/reference paths and digests.
 
+Some GIGASTROKE files omit separate `ref`/`alt` columns. In that case the
+adapter extracts REF/ALT from a `chromosome:position:ref:alt` or
+`chromosome_position_ref_alt` source variant ID. It accepts the parsed alleles
+only when the encoded chromosome and position exactly match the row; otherwise
+the row is rejected rather than guessing REF/ALT from effect/other alleles.
+
 Production runs should use an authoritative GRCh37-to-GRCh38 chain and matching
 GRCh38 FASTA from the same controlled reference release. Record their published
 digests in config rather than copying the tiny synthetic review fixtures.
