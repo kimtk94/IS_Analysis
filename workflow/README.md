@@ -73,3 +73,23 @@ verified chain/reference paths and digests.
 Production runs should use an authoritative GRCh37-to-GRCh38 chain and matching
 GRCh38 FASTA from the same controlled reference release. Record their published
 digests in config rather than copying the tiny synthetic review fixtures.
+
+## Ancestry-specific LD and fine-mapping stage
+
+`ancestry_ld_finemap.py` is the independent Stage 04 LD/fine-mapping workflow.
+It requires both EUR and EAS reference contracts, including panel name, build,
+ancestry, sample provenance, matrix, and allele metadata. It will not fall back
+to EUR LD for an EAS locus. Start from `config/ld_finemap.example.json` and run:
+
+```bash
+python3 workflow/ancestry_ld_finemap.py --config config/ld_finemap.json
+```
+
+The configured summary-statistics file must contain every variant in each locus,
+not only significant instruments. Instrument p-value filtering is used solely
+for ancestry-matched clumping. Fine-mapping uses all aligned locus variants,
+creates ancestry-specific PIPs/credible sets first, and then applies the
+predeclared cross-ancestry integration method. The QC table gates missingness,
+allele alignment, positive-definite LD, effective sample size, and locus
+coverage. The committed synthetic fixture deliberately gives EUR and EAS
+different variant sets and matrices.
