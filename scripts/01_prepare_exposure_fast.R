@@ -11,6 +11,9 @@ gene_file <- get_arg("--gene-file")
 source_file_list <- get_arg("--source-file-list")
 batch_id  <- get_arg("--batch-id", "batch_001")
 outdir    <- get_arg("--outdir", "results/exposure_batches")
+standardized_dir <- get_arg("--standardized-dir", "results/standardized/pqtl")
+instrument_dir <- get_arg("--instrument-dir", "results/instrument_candidates")
+gene_coordinate_file <- get_arg("--gene-coordinate-file")
 batch_output <- get_arg("--batch-output")
 rawdir    <- get_arg("--rawdir", "data/rawdata/pqtl/selected_targets")
 tmp_root  <- get_arg("--tmpdir", "/content/ukbppp_tmp")
@@ -31,6 +34,7 @@ if (is.na(max_file_lines) || max_file_lines < 0) stop("[ERROR] --max-file-lines 
 
 if (is.null(gene_file)) stop("[ERROR] --gene-file is required")
 if (!file.exists(gene_file)) stop("[ERROR] gene file does not exist: ", gene_file)
+if (no_cis_filter) stop("[ERROR] --no-cis-filter is no longer supported: cis filtering is mandatory for instrument candidates")
 
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 dir.create(tmp_root, recursive = TRUE, showWarnings = FALSE)
@@ -103,6 +107,16 @@ empty_exposure_dt <- function() {
     effect_allele.exposure=character(), other_allele.exposure=character(),
     eaf.exposure=numeric(), pval.exposure=numeric(), samplesize.exposure=numeric(),
     is_cis=logical(), F_stat=numeric()
+  )
+}
+
+empty_canonical_dt <- function() {
+  data.table(
+    dataset_id=character(), protein_id=character(), assay_id=character(), gene_symbol=character(),
+    ancestry=character(), genome_build=character(), chromosome=character(), position=integer(),
+    rsid=character(), ref=character(), alt=character(), effect_allele=character(),
+    other_allele=character(), beta=numeric(), se=numeric(), p_value=numeric(), eaf=numeric(),
+    sample_size=numeric(), source_archive=character()
   )
 }
 
@@ -195,30 +209,50 @@ standardize_pqtl <- function(dt, gene, ancestry, source_file) {
   out
 }
 
+to_canonical <- function(dt, source_file) {
+  stem <- tools::file_path_sans_ext(basename(source_file))
+  tokens <- strsplit(stem, "_", fixed = TRUE)[[1]]
+  protein_id <- if (length(tokens) >= 2) tokens[[2]] else NA_character_
+  assay_id <- if (length(tokens) >= 3) tokens[[3]] else NA_character_
+  dt[, .(
+    dataset_id = "UKB-PPP", protein_id = protein_id, assay_id = assay_id,
+    gene_symbol, ancestry, genome_build = "GRCh38", chromosome = as.character(chr),
+    position = as.integer(pos_hg38),
+    rsid = fifelse(grepl("^rs[0-9]+$", SNP, ignore.case = TRUE), SNP, NA_character_),
+    ref = other_allele, alt = effect_allele, effect_allele, other_allele,
+    beta, se, p_value = pval, eaf, sample_size = samplesize,
+    source_archive = basename(source_file)
+  )]
+}
+
 # ---------- optional cis coordinate ----------
 load_gene_coords <- function() {
-  for (p in c("results/qc/gene_coordinates_hg38.tsv", "data/reference/gene_coordinates_hg38.tsv", "reference/gene_coordinates_hg38.tsv")) {
+  paths <- if (!is.null(gene_coordinate_file)) gene_coordinate_file else c("results/qc/gene_coordinates_hg38.tsv", "data/reference/gene_coordinates_hg38.tsv", "reference/gene_coordinates_hg38.tsv")
+  for (p in paths) {
     if (file.exists(p)) {
       x <- fread(p); names(x) <- tolower(names(x))
-      if (all(c("gene_symbol", "chr", "start", "end") %in% names(x))) {
+      if (all(c("gene_symbol", "chr", "start", "end", "genome_build") %in% names(x))) {
         x[, gene_symbol := safe_upper(gene_symbol)]
         x[, chr := as.character(chr)]
         x[, start := as.integer(start)]
         x[, end := as.integer(end)]
-        msg("[INFO] Loaded gene coordinates: ", p)
+        builds <- toupper(gsub("[^A-Z0-9]", "", as.character(x$genome_build)))
+        if (any(!builds %in% c("GRCH38", "HG38"))) stop("[ERROR] Gene coordinate genome_build must be GRCh38/hg38: ", p)
+        msg("[INFO] Loaded GRCh38 gene coordinates: ", p)
         return(x)
       }
     }
   }
-  msg("[WARN] No gene coordinate table found. Cis filter will be skipped.")
+  msg("[ERROR] No usable GRCh38 gene coordinate table found (required columns: gene_symbol, chr, start, end, genome_build).")
   NULL
 }
 gene_coords <- load_gene_coords()
 
 apply_filters <- function(dt, gene) {
   if (!nrow(dt)) return(dt)
-  dt[, is_cis := NA]
-  if (!no_cis_filter && !is.null(gene_coords)) {
+  if (is.null(gene_coords)) stop("Cis selection requires a GRCh38 gene coordinate reference")
+  dt[, is_cis := FALSE]
+  {
     coord <- gene_coords[gene_symbol == gene]
     if (nrow(coord)) {
       coord <- coord[1]
@@ -226,9 +260,7 @@ apply_filters <- function(dt, gene) {
       vchr <- gsub("^chr", "", as.character(dt$chr), ignore.case = TRUE)
       dt[, is_cis := vchr == gene_chr & pos_hg38 >= (coord$start - cis_window) & pos_hg38 <= (coord$end + cis_window)]
       dt <- dt[is_cis == TRUE]
-    } else {
-      msg("[WARN] No coordinate for ", gene, "; cis filter skipped for this gene.")
-    }
+    } else stop("No GRCh38 coordinate found for gene ", gene)
   }
   if (!no_p_filter && !keep_all) dt <- dt[!is.na(pval) & pval < p_threshold]
   if (!nrow(dt)) return(dt)
@@ -307,8 +339,9 @@ process_one <- function(gene, ancestry) {
   for (tar0 in tars) {
     panel <- safe_label(tools::file_path_sans_ext(basename(tar0)))
     out <- file.path(per_gene_dir, paste0(gene, "__", ancestry, "__", panel, ".tsv"))
+    full_out <- file.path(standardized_dir, ancestry, batch_id, paste0(gene, "__", panel, ".tsv"))
     st <- copy(status0); st[, `:=`(tar_file = tar0, output_file = out)]
-    if (!force && file.exists(out) && file.info(out)$size > 0) {
+    if (!force && file.exists(out) && file.info(out)$size > 0 && file.exists(full_out) && file.info(full_out)$size > 0) {
       existing <- tryCatch(fread(out, showProgress = FALSE), error = function(e) NULL)
       if (!is.null(existing)) {
         st[, `:=`(status = "completed_existing", n_filtered_rows = nrow(existing), message = "Existing output loaded")]
@@ -320,6 +353,9 @@ process_one <- function(gene, ancestry) {
       tar <- stage_tar_to_local(tar0, ancestry)
       raw <- read_pqtl_from_tar_fast(tar); st[, n_raw_rows := nrow(raw)]
       std <- standardize_pqtl(raw, gene, ancestry, basename(tar0)); rm(raw); gc(FALSE)
+      canonical <- to_canonical(std, basename(tar0))
+      dir.create(dirname(full_out), recursive = TRUE, showWarnings = FALSE)
+      if (nrow(canonical)) fwrite(canonical, full_out, sep = "\t") else fwrite(empty_canonical_dt(), full_out, sep = "\t")
       filt <- apply_filters(std, gene); rm(std); gc(FALSE)
       st[, n_filtered_rows := nrow(filt)]
       if (!nrow(filt)) { st[, `:=`(status = "no_variants_after_filter", message = "No variants after filters")]; write_empty_exposure(out); NULL }
@@ -385,8 +421,18 @@ if (!length(valid_files)) {
   }
 }
 
+# Keep the legacy --outdir batch artifact for downstream compatibility, while
+# publishing the selection-stage result under its explicit product name.
+for (anc in ancestries) {
+  candidate_out <- file.path(instrument_dir, anc, basename(batch_out))
+  dir.create(dirname(candidate_out), recursive = TRUE, showWarnings = FALSE)
+  file.copy(batch_out, candidate_out, overwrite = TRUE)
+}
+
 fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
+failed_status <- rbindlist(all_status, fill = TRUE)[status == "failed"]
 staged <- file.path(tmp_root, "staged_tar", batch_id)
 if (dir.exists(staged)) unlink(staged, recursive = TRUE, force = TRUE)
 msg("[INFO] Completed batch: ", batch_id)
 msg("[INFO] Output: ", batch_out)
+if (nrow(failed_status)) stop("[ERROR] Instrument selection failed for ", nrow(failed_status), " source archive(s); see ", gene_status_out)
