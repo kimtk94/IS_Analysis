@@ -1,0 +1,7 @@
+variant_id	beta	se
+rs-direct	0.16	0.035
+rs-swapped	0.04	0.04
+rs-complement	0.03	0.04
+rs-palindromic	0.02	0.04
+rs-region-5	0.01	0.05
+rs-outcome-only	0.01	0.05
