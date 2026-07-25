@@ -1,0 +1,7 @@
+locus	ancestry	genome_build	variant_id	effect_allele	other_allele	beta	se	p_value	effective_sample_size
+GENE1	EUR	GRCh38	rsShared1	G	A	0.30	0.10	0.00000001	10000
+GENE1	EUR	GRCh38	rsShared2	T	C	0.15	0.10	0.0000005	10000
+GENE1	EUR	GRCh38	rsEurOnly	C	A	0.02	0.10	0.8	10000
+GENE1	EAS	GRCh38	rsShared1	G	A	0.20	0.10	0.00000002	8000
+GENE1	EAS	GRCh38	rsShared2	C	T	-0.12	0.10	0.0000007	8000
+GENE1	EAS	GRCh38	rsEasOnly	A	G	0.08	0.10	0.4	8000
