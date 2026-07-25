@@ -133,7 +133,7 @@ import tarfile
 from io import BytesIO
 from pathlib import Path
 
-member = Path("tests/fixtures/raw_member.tsv").read_bytes()
+member = Path("tests/fixtures/pqtl_locus_member.tsv").read_bytes()
 raw_dir = Path(os.environ["DUPLICATE_RAW_DIR"])
 for filename in ("ALPHA_P12345_OID1_v1_PANEL.tar", "ALPHA_Q99999_OID2_v1_PANEL.tar"):
     path = raw_dir / "EUR" / filename
@@ -150,14 +150,16 @@ Rscript scripts/01_prepare_exposure_fast.R \
   --outdir "${DUPLICATE_OUT_DIR}" \
   --rawdir "${DUPLICATE_RAW_DIR}" \
   --ancestries EUR \
-  --no-cis-filter
+  --gene-coordinate-file tests/fixtures/gene_coordinates_grch38.tsv \
+  --standardized-dir "${SMOKE_ROOT}/standardized/pqtl" \
+  --instrument-dir "${SMOKE_ROOT}/instrument_candidates"
 "${PYTHON_BIN}" - "${DUPLICATE_OUT_DIR}/exposure_duplicate_gene.tsv" <<'PY'
 import csv
 import sys
 
 with open(sys.argv[1], newline="", encoding="utf-8") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
-assert len(rows) == 4, f"Expected 4 rows from two archives, found {len(rows)}"
+assert len(rows) == 6, f"Expected all three significant cis SNPs from two archives, found {len(rows)}"
 assert {row["source_file"] for row in rows} == {
     "ALPHA_P12345_OID1_v1_PANEL.tar",
     "ALPHA_Q99999_OID2_v1_PANEL.tar",
@@ -167,5 +169,37 @@ assert len(exposures) == 2, f"Expected distinct exposure IDs per archive, found 
 assert all(row["gene_symbol"] == "ALPHA" and row["ancestry"] == "EUR" for row in rows)
 print("[OK] Both same-gene archives retained with distinct exposure IDs")
 PY
+
+echo "[TEST] Canonical full-summary retains every valid locus SNP"
+"${PYTHON_BIN}" - "${SMOKE_ROOT}/standardized/pqtl/EUR/duplicate_gene/ALPHA__ALPHA_P12345_OID1_v1_PANEL.tsv" <<'PY'
+import csv
+import sys
+
+with open(sys.argv[1], newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+required = {"dataset_id", "protein_id", "assay_id", "gene_symbol", "ancestry", "genome_build",
+            "chromosome", "position", "rsid", "ref", "alt", "effect_allele", "other_allele",
+            "beta", "se", "p_value", "eaf", "sample_size", "source_archive"}
+assert required == set(rows[0]), set(rows[0])
+assert len(rows) == 4, f"Full summary must retain cis and trans locus rows, found {len(rows)}"
+assert {row["rsid"] for row in rows} == {"rs101", "rs102", "rs103", "rs104"}
+assert all(row["dataset_id"] == "UKB-PPP" and row["genome_build"] == "GRCh38" for row in rows)
+print("[OK] canonical full-summary schema and complete locus retention")
+PY
+
+echo "[TEST] Missing gene coordinate fails cis instrument selection"
+MISSING_OUT="${SMOKE_ROOT}/missing_coordinate_output"
+if Rscript scripts/01_prepare_exposure_fast.R \
+  --gene-file "${DUPLICATE_GENE_FILE}" --batch-id missing_coordinate \
+  --outdir "${MISSING_OUT}" --rawdir "${DUPLICATE_RAW_DIR}" --ancestries EUR \
+  --gene-coordinate-file tests/fixtures/gene_coordinates_missing.tsv \
+  --standardized-dir "${SMOKE_ROOT}/missing_standardized" \
+  --instrument-dir "${SMOKE_ROOT}/missing_instruments"; then
+  echo "[ERROR] Missing coordinate unexpectedly produced valid instruments" >&2
+  exit 1
+fi
+test ! -s "${SMOKE_ROOT}/missing_instruments/EUR/exposure_missing_coordinate.tsv" || \
+  test "$(wc -l < "${SMOKE_ROOT}/missing_instruments/EUR/exposure_missing_coordinate.tsv")" -eq 1
+echo "[OK] Missing coordinate rejected; no valid instrument rows emitted"
 
 echo "[OK] Codex smoke test completed"

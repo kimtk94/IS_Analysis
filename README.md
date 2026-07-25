@@ -263,8 +263,15 @@ incomplete, the archive is retained and the batch is marked
 ### Outputs and evidence
 
 - Raw archives: `data/rawdata/pqtl/selected_targets/{EUR,EAS}/`
-- Canonical filtered results: `results/exposure_batches/EUR/exposure_batch_###.tsv`
-  and `results/exposure_batches/EAS/exposure_batch_###.tsv`
+- Canonical **full-summary** pQTL data (all valid variants, before cis,
+  p-value, or strength selection):
+  `results/standardized/pqtl/{EUR,EAS}/batch_###/<gene>__<archive>.tsv`.
+- Instrument candidates after mandatory GRCh38 cis filtering, p-value
+  filtering, and F-statistic filtering:
+  `results/instrument_candidates/{EUR,EAS}/exposure_batch_###.tsv`.
+- Legacy compatibility outputs under
+  `results/exposure_batches/{EUR,EAS}/exposure_batch_###.tsv` contain the same
+  **filtered instrument candidates**; they are not full summary statistics.
 - Batch state: `results/qc/batch_pipeline/batch_manifest.tsv`
 - Run progress: `results/qc/batch_pipeline/batch_progress.tsv` (batch number,
   current phase, and terminal status)
@@ -275,9 +282,13 @@ incomplete, the archive is retained and the batch is marked
 - Per-gene processing state:
   `results/exposure_batches/{EUR,EAS}/logs/batch_###_gene_status.tsv`
 
-The R preparation stage applies cis filtering when gene coordinates are
-available, then retains `pval < --p-threshold` and `F_stat > 10`. It writes a
-schema-preserving empty TSV when a batch has no qualifying instruments.
+The dataset-adapter portion of the R preparation stage first writes every valid
+archive variant in the canonical full-summary schema. The separate selection
+portion requires a gene-coordinate table with a matching GRCh38/hg38 build,
+then retains cis variants with `pval < --p-threshold` and `F_stat > 10`. Missing
+coordinates or a mismatched genome build fail selection; unfiltered variants
+are never promoted to valid instruments. A batch with no qualifying variants
+writes a schema-preserving empty candidate TSV.
 
 ## Review smoke test
 
