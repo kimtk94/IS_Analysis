@@ -1,0 +1,478 @@
+{
+  "output_dir": "../data/standardized/outcome/gigastroke",
+  "liftover": {
+    "chain": "../references/grch37_to_grch38.chain",
+    "chain_sha256": "REPLACE_WITH_VERIFIED_SHA256",
+    "target_reference": "../references/GRCh38.fa",
+    "target_reference_sha256": "REPLACE_WITH_VERIFIED_SHA256",
+    "source_reference": "../references/GRCh37.fa",
+    "source_reference_sha256": "REPLACE_WITH_VERIFIED_SHA256"
+  },
+  "selection": {
+    "eur_discovery": "gigastroke_is_EUR",
+    "eas_replication_subtypes": [
+      "gigastroke_is_EAS",
+      "gigastroke_las_EAS",
+      "gigastroke_ces_EAS",
+      "gigastroke_svs_EAS"
+    ]
+  },
+  "datasets": [
+    {
+      "id": "gigastroke_is_EUR",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104540_ischemic_stroke_EUR.tsv.gz",
+      "ancestry": "EUR",
+      "outcome": "ischemic_stroke",
+      "role": "discovery",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_las_EUR",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104542_large_artery_stroke_EUR.tsv.gz",
+      "ancestry": "EUR",
+      "outcome": "large_artery_stroke",
+      "role": "available_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_ces_EUR",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104541_cardioembolic_stroke_EUR.tsv.gz",
+      "ancestry": "EUR",
+      "outcome": "cardioembolic_stroke",
+      "role": "available_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_svs_EUR",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104543_small_vessel_stroke_EUR.tsv.gz",
+      "ancestry": "EUR",
+      "outcome": "small_vessel_stroke",
+      "role": "available_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_is_EAS",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104545_ischemic_stroke_EAS.tsv.gz",
+      "ancestry": "EAS",
+      "outcome": "ischemic_stroke",
+      "role": "replication",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_las_EAS",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104547_large_artery_stroke_EAS.tsv.gz",
+      "ancestry": "EAS",
+      "outcome": "large_artery_stroke",
+      "role": "replication_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_ces_EAS",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104546_cardioembolic_stroke_EAS.tsv.gz",
+      "ancestry": "EAS",
+      "outcome": "cardioembolic_stroke",
+      "role": "replication_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_svs_EAS",
+      "input": "../data/rawdata/outcome/gigastroke_gwas_catalog/GCST90104548_small_vessel_stroke_EAS.tsv.gz",
+      "ancestry": "EAS",
+      "outcome": "small_vessel_stroke",
+      "role": "replication_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome",
+          "hm_chrom"
+        ],
+        "position": [
+          "base_pair_location",
+          "hm_pos"
+        ],
+        "ref": [
+          "ref",
+          "reference_allele"
+        ],
+        "alt": [
+          "alt",
+          "alternate_allele"
+        ],
+        "variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele",
+          "hm_effect_allele"
+        ],
+        "other_allele": [
+          "other_allele",
+          "hm_other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "n"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    }
+  ]
+}
