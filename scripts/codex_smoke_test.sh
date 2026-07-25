@@ -48,7 +48,75 @@ bash -n scripts/colab_download_grch38_liftover_references.sh
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
   scripts/colab_download_gigastroke_gwas.py \
   scripts/configure_gigastroke_outcomes.py \
-  workflow/gigastroke_outcome_adapter.py
+  workflow/gigastroke_outcome_adapter.py \
+  workflow/causal_checkpoint_analysis.py
+
+echo "[TEST] Independent causal-analysis checkpoints"
+CAUSAL_OUT="/tmp/is_analysis_causal_checkpoint"
+rm -rf "${CAUSAL_OUT}"
+for stage in harmonization mr sensitivity colocalization; do
+  "${PYTHON_BIN}" workflow/causal_checkpoint_analysis.py \
+    --config tests/fixtures/causal_checkpoint/config.json --stage "${stage}"
+done
+"${PYTHON_BIN}" - "${CAUSAL_OUT}" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+with (root / "harmonization/variants.tsv").open(newline="", encoding="utf-8") as handle:
+    harmonized = {row["variant_id"]: row for row in csv.DictReader(handle, delimiter="\t")}
+assert harmonized["rs-direct"]["allele_state"] == "DIRECT"
+assert harmonized["rs-swapped"]["allele_state"] == "SWAPPED"
+assert harmonized["rs-complement"]["allele_state"] == "COMPLEMENT"
+assert harmonized["rs-palindromic"]["reason"] == "PALINDROMIC_AMBIGUOUS"
+assert harmonized["rs-mismatch"]["allele_state"] == "MISMATCH"
+with (root / "mr/estimates.tsv").open(newline="", encoding="utf-8") as handle:
+    estimates = {row["method"]: row for row in csv.DictReader(handle, delimiter="\t")}
+assert estimates["IVW"]["status"] == "SUCCESS"
+assert all(estimates[name]["status"] == "SUCCESS" for name in ("WEIGHTED_MEDIAN", "MR_EGGER", "WEIGHTED_MODE"))
+with (root / "sensitivity/results.tsv").open(newline="", encoding="utf-8") as handle:
+    sensitivity = list(csv.DictReader(handle, delimiter="\t"))
+assert {row["analysis"] for row in sensitivity} >= {"COCHRAN_Q", "EGGER_INTERCEPT", "LEAVE_ONE_OUT", "STEIGER_DIRECTIONALITY", "REVERSE_MR"}
+with (root / "colocalization/results.tsv").open(newline="", encoding="utf-8") as handle:
+    coloc = list(csv.DictReader(handle, delimiter="\t"))
+assert len(coloc) == 2 and all(row["common_snps"] == "5" for row in coloc)
+assert json.loads((root / "colocalization/multiple_signal_status.json").read_text())["status"] == "READY_SUSIE"
+assert all(json.loads((root / stage / "status.json").read_text())["status"] == "SUCCESS" for stage in ("harmonization", "mr", "sensitivity", "colocalization"))
+print("[OK] allele states, MR selection, conditional sensitivity, regional coloc, and checkpoint statuses")
+PY
+
+echo "[TEST] Single-instrument Wald and reasoned insufficient-instrument states"
+"${PYTHON_BIN}" - <<'PY'
+import json
+from pathlib import Path
+
+source = Path("tests/fixtures/causal_checkpoint/config.json")
+config = json.loads(source.read_text())
+config.update(instrument_exposure="exposure_single.tsv", instrument_outcome="outcome_single.tsv",
+              output_dir="/tmp/is_analysis_causal_single")
+Path("tests/fixtures/causal_checkpoint/config.single.runtime.json").write_text(json.dumps(config))
+PY
+rm -rf /tmp/is_analysis_causal_single
+"${PYTHON_BIN}" workflow/causal_checkpoint_analysis.py --config tests/fixtures/causal_checkpoint/config.single.runtime.json --stage harmonization
+"${PYTHON_BIN}" workflow/causal_checkpoint_analysis.py --config tests/fixtures/causal_checkpoint/config.single.runtime.json --stage mr
+"${PYTHON_BIN}" workflow/causal_checkpoint_analysis.py --config tests/fixtures/causal_checkpoint/config.single.runtime.json --stage sensitivity
+rm tests/fixtures/causal_checkpoint/config.single.runtime.json
+"${PYTHON_BIN}" - <<'PY'
+import csv
+from pathlib import Path
+
+root = Path("/tmp/is_analysis_causal_single")
+with (root / "mr/estimates.tsv").open(newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+assert rows[0]["method"] == "WALD_RATIO" and rows[0]["status"] == "SUCCESS"
+assert all(row["status"] == "NOT_RUN_INSUFFICIENT_INSTRUMENTS" for row in rows[1:])
+with (root / "sensitivity/results.tsv").open(newline="") as handle:
+    sensitivity = list(csv.DictReader(handle, delimiter="\t"))
+assert next(row for row in sensitivity if row["analysis"] == "COCHRAN_Q")["status"] == "NOT_RUN_INSUFFICIENT_INSTRUMENTS"
+print("[OK] single SNP uses Wald ratio and unsupported analyses retain reasoned states")
+PY
 
 echo "[TEST] GIGASTROKE outcome adapter fixture"
 GIGASTROKE_OUT="${SMOKE_ROOT}/gigastroke"

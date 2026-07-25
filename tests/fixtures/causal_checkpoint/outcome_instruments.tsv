@@ -1,0 +1,6 @@
+variant_id	build	chromosome	position	effect_allele	other_allele	beta	se	eaf
+rs-direct	GRCh38	1	101	A	G	0.10	0.03	0.21
+rs-swapped	GRCh38	1	102	T	C	-0.08	0.025	0.69
+rs-complement	GRCh38	1	103	T	G	0.06	0.02	0.36
+rs-palindromic	GRCh38	1	104	A	T	0.04	0.025	0.50
+rs-mismatch	GRCh38	1	105	G	A	0.03	0.02	0.22

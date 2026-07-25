@@ -1,5 +1,31 @@
 # GIGASTROKE outcome analysis stage
 
+## Checkpointed causal analysis
+
+`causal_checkpoint_analysis.py` implements four independently runnable stages:
+`harmonization`, `mr`, `sensitivity`, and `colocalization`. Run all stages, or
+resume one checkpoint, with:
+
+```bash
+python3 workflow/causal_checkpoint_analysis.py --config CONFIG.json --stage all
+python3 workflow/causal_checkpoint_analysis.py --config CONFIG.json --stage colocalization
+```
+
+Each stage owns a directory and a `status.json`; a scientifically unavailable
+analysis is recorded as a reasoned `NOT_RUN_*` or `FAILED_*` state, not an empty
+success. Harmonization validates build/coordinate/allele identity and records
+direct, swapped, complemented, palindromic, and mismatched variants. The
+palindromic policy uses the configured EAF ambiguity range and difference gate,
+but excludes rather than guessing strand direction.
+
+The MR checkpoint chooses Wald ratio for one instrument and IVW for multiple
+instruments. Robust methods and sensitivity analyses state their minimum-SNP
+support condition in every output row. Colocalization has a separate input
+contract for complete regional exposure/outcome statistics; it records common
+SNP count, coverage, PP0--PP4, each configured prior set, and a distinct
+conditional/SuSiE multiple-signal readiness state. The tiny files under
+`tests/fixtures/causal_checkpoint` are synthetic validation data only.
+
 `gigastroke_outcome_adapter.py` consumes local files created by
 `scripts/colab_download_gigastroke_gwas.py`; it contains no downloader and must be
 run only after that setup stage.
