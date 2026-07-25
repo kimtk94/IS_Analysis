@@ -40,12 +40,46 @@ cat("[OK] data.table:", as.character(packageVersion("data.table")), "\n")
 ' || report_env_not_ready "Missing R package data.table. Run scripts/setup_codex_env.sh during setup, not during review."
 
 echo "[TEST] Python syntax"
+bash -n scripts/colab_download_grch38_liftover_references.sh
 "${PYTHON_BIN}" -m py_compile \
   scripts/00_run_full_audit_final.py \
   scripts/build_ukb_ppp_download_manifest.py \
   scripts/synapse_metadata.py \
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
-  scripts/colab_download_gigastroke_gwas.py
+  scripts/colab_download_gigastroke_gwas.py \
+  scripts/configure_gigastroke_outcomes.py \
+  workflow/gigastroke_outcome_adapter.py
+
+echo "[TEST] GIGASTROKE outcome adapter fixture"
+GIGASTROKE_OUT="${SMOKE_ROOT}/gigastroke"
+"${PYTHON_BIN}" workflow/gigastroke_outcome_adapter.py \
+  --config tests/fixtures/gigastroke/config.json --output-dir "${GIGASTROKE_OUT}"
+"${PYTHON_BIN}" - "${GIGASTROKE_OUT}" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+with (root / "gigastroke_is_EUR.canonical.tsv").open(newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+assert len(rows) == 3
+assert rows[0]["source_chromosome"] == "1" and rows[0]["chromosome"] == "1"
+assert rows[0]["source_variant_id"] == "rs-good"
+derived = next(row for row in rows if row["source_variant_id"] == "chr1:6:A:T")
+assert (derived["source_ref"], derived["source_alt"], derived["ref"], derived["alt"]) == ("A", "T", "A", "T")
+indel = next(row for row in rows if row["source_variant_id"] == "rs-indel")
+assert (indel["source_position"], indel["source_ref"], indel["source_alt"]) == ("11", "AA", "A")
+assert (indel["position"], indel["ref"], indel["alt"]) == ("1", "AA", "A")
+with (root / "gigastroke_is_EUR.rejected.tsv").open(newline="", encoding="utf-8") as handle:
+    rejects = list(csv.DictReader(handle, delimiter="\t"))
+assert {row["reason"] for row in rejects} == {"unmapped", "multi_mapped", "duplicate", "reference_allele_mismatch"}
+manifest = json.loads((root / "dataset_manifest.json").read_text(encoding="utf-8"))
+assert {(item["ancestry"], item["role"], item["source_build"], item["target_build"]) for item in manifest} == {
+    ("EUR", "discovery", "GRCh37", "GRCh38"), ("EAS", "replication_subtype", "GRCh37", "GRCh38")}
+assert all(len(item["chain_sha256"]) == 64 and len(item["target_reference_sha256"]) == 64 for item in manifest)
+print("[OK] liftover, normalization, provenance, selection, and reasoned exclusions")
+PY
 
 echo "[TEST] Fixture config JSON"
 "${PYTHON_BIN}" -m json.tool "${FIXTURE_CONFIG}" >/dev/null

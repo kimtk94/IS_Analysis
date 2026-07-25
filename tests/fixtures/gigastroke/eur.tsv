@@ -1,0 +1,8 @@
+chromosome	base_pair_location	ref	alt	variant_id	effect_allele	other_allele	beta	standard_error	p_value	effect_allele_frequency	sample_size
+chr1	5	A	G	rs-good	G	A	0.1	0.02	1e-8	0.2	1000
+chr1	6			chr1:6:A:T	T	A	0.11	0.02	1e-7	0.21	1000
+1	11	AA	A	rs-indel	A	AA	-0.2	0.03	2e-7	0.1	1000
+1	5	A	G	rs-duplicate	G	A	0.1	0.02	1e-8	0.2	1000
+2	7	A	T	rs-mismatch	T	A	0.3	0.04	3e-6	0.3	1000
+9	8	A	C	rs-unmapped	C	A	0.4	0.05	4e-5	0.4	1000
+3	9	G	A	rs-multimap	A	G	0.5	0.06	5e-4	0.5	1000

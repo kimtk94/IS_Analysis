@@ -1,0 +1,117 @@
+{
+  "output_dir": "../../../../tmp/gigastroke_fixture_output",
+  "liftover": {
+    "chain": "grch37_to_grch38.chain",
+    "chain_sha256": "58a902b4e6f67f2a726a9c9ee6592f7d623be2ae7c89f5cb1f4f37390a160b64",
+    "target_reference": "grch38.fa",
+    "target_reference_sha256": "837e0690a89d044009261a250c83855847dabeaa70038f05baaad026986b5ec3"
+  },
+  "selection": {
+    "eur_discovery": "gigastroke_is_EUR",
+    "eas_replication_subtypes": [
+      "gigastroke_las_EAS"
+    ]
+  },
+  "datasets": [
+    {
+      "id": "gigastroke_is_EUR",
+      "input": "eur.tsv",
+      "ancestry": "EUR",
+      "outcome": "ischemic_stroke",
+      "role": "discovery",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome"
+        ],
+        "position": [
+          "base_pair_location"
+        ],
+        "ref": [
+          "ref"
+        ],
+        "alt": [
+          "alt"
+        ],
+        "variant_id": [
+          "variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele"
+        ],
+        "other_allele": [
+          "other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "sample_size"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    },
+    {
+      "id": "gigastroke_las_EAS",
+      "input": "eas_las.tsv",
+      "ancestry": "EAS",
+      "outcome": "large_artery_stroke",
+      "role": "replication_subtype",
+      "source_build": "GRCh37",
+      "columns": {
+        "chromosome": [
+          "chromosome"
+        ],
+        "position": [
+          "base_pair_location"
+        ],
+        "ref": [
+          "ref"
+        ],
+        "alt": [
+          "alt"
+        ],
+        "variant_id": [
+          "variant_id"
+        ],
+        "effect_allele": [
+          "effect_allele"
+        ],
+        "other_allele": [
+          "other_allele"
+        ],
+        "beta": [
+          "beta"
+        ],
+        "se": [
+          "standard_error"
+        ],
+        "p_value": [
+          "p_value"
+        ],
+        "eaf": [
+          "effect_allele_frequency"
+        ],
+        "sample_size": [
+          "sample_size"
+        ],
+        "ref_alt_variant_id": [
+          "variant_id",
+          "hm_variant_id"
+        ]
+      }
+    }
+  ]
+}
