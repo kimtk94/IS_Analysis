@@ -1,0 +1,13 @@
+{
+  "gigastroke_loci": "loci.tsv",
+  "output": "/tmp/is_analysis_brain_eqtl_coloc/results.tsv",
+  "minimum_common_snps": 2,
+  "minimum_coverage": 0.8,
+  "priors": {"p1": 0.0001, "p2": 0.0001, "p12": 0.000001},
+  "prior_variances": {"gwas": 0.04, "eqtl": 0.0225},
+  "datasets": [
+    {"registry": "../../../config/datasets/gtex_brain.json", "input": "eqtl_bulk.tsv", "gene": "GENE1", "tissue_or_cell_type": "Cortex", "availability": "PUBLIC_SUMMARY"},
+    {"registry": "../../../config/datasets/singlebrain.json", "input": "eqtl_cell.tsv", "gene": "GENE1", "tissue_or_cell_type": "excitatory neuron", "availability": "PUBLIC_SUMMARY"},
+    {"registry": "../../../config/datasets/commonmind.json", "gene": "GENE1", "tissue_or_cell_type": "DLPFC", "availability": "CONTROLLED_ACCESS_REQUIRED", "reason": "fixture has no approved controlled-access file"}
+  ]
+}

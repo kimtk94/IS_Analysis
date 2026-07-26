@@ -1,0 +1,13 @@
+{
+  "dataset_id": "singlebrain_meta_eqtl",
+  "display_name": "SingleBrain cell-type eQTL meta-analysis",
+  "genome_build": "GRCh38",
+  "resolution": "cell_type_or_subtype",
+  "tissues_or_cell_types": ["excitatory neuron", "inhibitory neuron", "astrocyte", "oligodendrocyte", "OPC", "microglia", "endothelial/pericyte"],
+  "sample_size": {"unit": "donors", "value": 196, "note": "release-level effective N differs by cell type; registry consumers must retain per-result N"},
+  "ancestry": "multi-cohort; ancestry composition is cell-type/release-specific",
+  "qtl_unit": "cell-type/subtype pseudobulk gene-variant cis-eQTL",
+  "evidence_family": "SINGLEBRAIN_CONSORTIUM_META",
+  "access": {"public_summary_statistics": "SingleBrain portal/release summary statistics where made public", "controlled_access": "contributing cohort subject-level data remain under their original approvals", "default_input_status": "NOT_CONFIGURED"},
+  "source": {"cohort": "SingleBrain consortium meta-analysis", "publication": "SingleBrain consortium release; record release DOI/version with downloaded statistics"}
+}

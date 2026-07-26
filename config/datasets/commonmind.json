@@ -1,0 +1,13 @@
+{
+  "dataset_id": "commonmind_dlpfc_eqtl",
+  "display_name": "CommonMind Consortium DLPFC eQTL",
+  "genome_build": "GRCh37",
+  "resolution": "bulk_tissue",
+  "tissues_or_cell_types": ["dorsolateral prefrontal cortex"],
+  "sample_size": {"unit": "brains", "value": 467, "note": "CMC discovery RNA-seq cohort"},
+  "ancestry": "European and African ancestry; release-specific QC subsets",
+  "qtl_unit": "gene-variant cis-eQTL",
+  "evidence_family": "COMMONMIND_DLPFC",
+  "access": {"public_summary_statistics": "published CMC eQTL summary products on Synapse", "controlled_access": "genotype, expression and protected subject-level data require Synapse approval", "default_input_status": "ACCESS_REVIEW_REQUIRED"},
+  "source": {"cohort": "CommonMind Consortium", "publication": "Fromer et al., Nature Neuroscience 2016, doi:10.1038/nn.4399"}
+}

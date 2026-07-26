@@ -49,7 +49,33 @@ bash -n scripts/colab_download_grch38_liftover_references.sh
   scripts/colab_download_gigastroke_gwas.py \
   scripts/configure_gigastroke_outcomes.py \
   workflow/gigastroke_outcome_adapter.py \
+  workflow/annotation/brain_eqtl_colocalization.py \
   workflow/causal_checkpoint_analysis.py
+
+echo "[TEST] Brain eQTL registry and GIGASTROKE colocalization adapter"
+BRAIN_COLOC_OUT="${SMOKE_ROOT}/brain_eqtl_coloc.tsv"
+"${PYTHON_BIN}" workflow/annotation/brain_eqtl_colocalization.py \
+  --config tests/fixtures/brain_eqtl_coloc/config.json --output "${BRAIN_COLOC_OUT}"
+"${PYTHON_BIN}" - "${BRAIN_COLOC_OUT}" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+for path in sorted(Path("config/datasets").glob("*.json")):
+    registry = json.loads(path.read_text(encoding="utf-8"))
+    assert registry["genome_build"] and registry["qtl_unit"] and registry["evidence_family"]
+    assert registry["access"]["public_summary_statistics"] and registry["access"]["controlled_access"]
+with Path(sys.argv[1]).open(newline="", encoding="utf-8") as handle:
+    result = list(csv.DictReader(handle, delimiter="\t"))
+assert len(result) == 3
+assert result[0]["status"] == "SUCCESS" and result[0]["bulk_tissue"] == "Cortex"
+assert result[1]["status"] == "SUCCESS" and result[1]["cell_type_or_subtype"] == "excitatory neuron"
+assert all(row["common_snps"] == "3" for row in result[:2])
+assert result[2]["status"] == "NOT_RUN_ACCESS_REQUIRED" and result[2]["pp4"] == ""
+assert len({row["evidence_family"] for row in result}) == 3
+print("[OK] registries, harmonization, resolution fields, coloc outputs, and access status")
+PY
 
 echo "[TEST] Independent causal-analysis checkpoints"
 CAUSAL_OUT="/tmp/is_analysis_causal_checkpoint"

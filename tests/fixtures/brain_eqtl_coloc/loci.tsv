@@ -1,0 +1,2 @@
+locus_id	gene	genome_build	chromosome	start	end	regional_statistics
+GIGA_1	GENE1	GRCh38	1	100	300	gwas.tsv

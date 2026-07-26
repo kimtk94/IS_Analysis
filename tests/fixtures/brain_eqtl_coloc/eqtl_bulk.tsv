@@ -1,0 +1,4 @@
+gene	chromosome	position	ref	alt	beta	se
+GENE1	1	100	A	G	0.30	0.06
+GENE1	1	200	T	C	-0.12	0.06
+GENE1	1	300	G	A	-0.20	0.06

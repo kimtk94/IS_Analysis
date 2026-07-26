@@ -1,0 +1,17 @@
+{
+  "dataset_id": "gtex_v8_brain",
+  "display_name": "GTEx v8 brain tissues",
+  "genome_build": "GRCh38",
+  "resolution": "bulk_tissue",
+  "tissues_or_cell_types": ["Amygdala", "Anterior cingulate cortex BA24", "Caudate", "Cerebellar hemisphere", "Cerebellum", "Cortex", "Frontal cortex BA9", "Hippocampus", "Hypothalamus", "Nucleus accumbens", "Putamen", "Spinal cord cervical c-1", "Substantia nigra"],
+  "sample_size": {"unit": "donors", "range": [114, 209], "note": "varies by tissue in the v8 release"},
+  "ancestry": "multi-ancestry; predominantly European",
+  "qtl_unit": "gene-variant cis-eQTL, tissue-specific",
+  "evidence_family": "GTEX_V8",
+  "access": {
+    "public_summary_statistics": "GTEx Portal v8 significant variant-gene pairs and all-pairs files where released",
+    "controlled_access": "individual-level genotype and expression through dbGaP phs000424",
+    "default_input_status": "NOT_CONFIGURED"
+  },
+  "source": {"cohort": "Genotype-Tissue Expression (GTEx) Project v8", "publication": "GTEx Consortium, Science 2020, doi:10.1126/science.aaz1776"}
+}
