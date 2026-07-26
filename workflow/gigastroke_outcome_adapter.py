@@ -13,6 +13,7 @@ import gzip
 import hashlib
 import json
 import re
+import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
@@ -46,23 +47,50 @@ def chromosome(value: str) -> str:
 
 class Fasta:
     def __init__(self, path: Path):
-        self.sequences: dict[str, str] = {}
-        name = None
-        parts: list[str] = []
-        with path.open(encoding="ascii") as handle:
+        self.path = path
+        self.index_path = Path(str(path) + ".fai")
+        if not self.index_path.exists():
+            self._build_index()
+        self.index = {}
+        with self.index_path.open(encoding="ascii") as handle:
             for line in handle:
-                if line.startswith(">"):
-                    if name is not None:
-                        self.sequences[chromosome(name)] = "".join(parts).upper()
-                    name, parts = line[1:].split()[0], []
+                name, length, offset, line_bases, line_width = line.rstrip().split("\t")[:5]
+                self.index[chromosome(name)] = tuple(map(int, (length, offset, line_bases, line_width)))
+        self.handle = self.path.open("rb")
+
+    def _build_index(self) -> None:
+        entries = []
+        with self.path.open("rb") as handle:
+            name = None; length = offset = line_bases = line_width = 0
+            while True:
+                line_start = handle.tell(); line = handle.readline()
+                if not line:
+                    if name is not None: entries.append((name, length, offset, line_bases, line_width))
+                    break
+                if line.startswith(b">"):
+                    if name is not None: entries.append((name, length, offset, line_bases, line_width))
+                    name = line[1:].split()[0].decode("ascii")
+                    length = 0; offset = handle.tell(); line_bases = line_width = 0
                 else:
-                    parts.append(line.strip())
-        if name is not None:
-            self.sequences[chromosome(name)] = "".join(parts).upper()
+                    bases = len(line.rstrip(b"\r\n"))
+                    if bases and not line_bases: line_bases, line_width = bases, len(line)
+                    length += bases
+        temp = Path(str(self.index_path) + ".tmp")
+        temp.write_text("".join("\t".join(map(str, item)) + "\n" for item in entries), encoding="ascii")
+        temp.replace(self.index_path)
 
     def bases(self, chrom: str, pos: int, length: int) -> str:
-        seq = self.sequences.get(chromosome(chrom), "")
-        return seq[pos - 1:pos - 1 + length]
+        entry = self.index.get(chromosome(chrom))
+        if not entry or pos < 1 or pos + length - 1 > entry[0]: return ""
+        _, offset, line_bases, line_width = entry
+        start = pos - 1; remaining = length; chunks = []
+        while remaining:
+            in_line = start % line_bases
+            take = min(remaining, line_bases - in_line)
+            self.handle.seek(offset + (start // line_bases) * line_width + in_line)
+            chunks.append(self.handle.read(take))
+            start += take; remaining -= take
+        return b"".join(chunks).decode("ascii").upper()
 
 
 class Chain:
@@ -177,7 +205,7 @@ def source_variant(row: dict[str, str], columns: dict[str, list[str]], source_fa
     return (variant_id, effect, other) if effect_matches else (variant_id, other, effect)
 
 
-def run(config_path: Path, output_override: Path | None = None) -> None:
+def run(config_path: Path, output_override: Path | None = None, dataset_id: str | None = None) -> None:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     root = config_path.parent
     resolve = lambda p: (root / p).resolve() if not Path(p).is_absolute() else Path(p)
@@ -193,6 +221,8 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
     outdir = output_override.resolve() if output_override else resolve(config["output_dir"])
     outdir.mkdir(parents=True, exist_ok=True)
     selected = {config["selection"]["eur_discovery"], *config["selection"]["eas_replication_subtypes"]}
+    if dataset_id and dataset_id not in selected:
+        raise SystemExit(f"--dataset-id is not selected in config: {dataset_id}")
     indexed = {item["id"]: item for item in config["datasets"]}
     missing = selected - indexed.keys()
     if missing:
@@ -205,11 +235,19 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
         raise SystemExit("EAS selections must identify replication or replication_subtype datasets")
     manifests = []
     for dataset in config["datasets"]:
-        if dataset["id"] not in selected:
+        if dataset["id"] not in selected or (dataset_id and dataset["id"] != dataset_id):
             continue
         source = resolve(dataset["input"])
-        accepted, rejected, seen = [], [], set()
-        with open_text(source) as handle:
+        output = outdir / f"{dataset['id']}.canonical.tsv"; reject = outdir / f"{dataset['id']}.rejected.tsv"
+        database = outdir / f".{dataset['id']}.duplicates.sqlite3"
+        if database.exists(): database.unlink()
+        accepted_count = rejected_count = 0; counts = defaultdict(int)
+        connection = sqlite3.connect(database)
+        connection.execute("CREATE TABLE seen (variant TEXT PRIMARY KEY)")
+        with open_text(source) as handle, output.open("w", newline="", encoding="utf-8") as accepted_handle, reject.open("w", newline="", encoding="utf-8") as rejected_handle:
+            accepted_writer = csv.DictWriter(accepted_handle, delimiter="\t", fieldnames=CANONICAL, lineterminator="\n"); accepted_writer.writeheader()
+            reject_fields = ["dataset_id", "source_line", "reason", "source_chromosome", "source_position", "source_ref", "source_alt", "source_variant_id"]
+            rejected_writer = csv.DictWriter(rejected_handle, delimiter="\t", fieldnames=reject_fields, lineterminator="\n"); rejected_writer.writeheader()
             reader = csv.DictReader(handle, delimiter=dataset.get("delimiter", "\t"))
             for line_no, row in enumerate(reader, 2):
                 try:
@@ -224,25 +262,28 @@ def run(config_path: Path, output_override: Path | None = None) -> None:
                     if fasta.bases(tc, tp, len(tref)) != tref:
                         raise ValueError("reference_allele_mismatch")
                     key = (tc, tp, tref, talt)
-                    if key in seen:
+                    try:
+                        connection.execute("INSERT INTO seen VALUES (?)", ("|".join(map(str, key)),))
+                    except sqlite3.IntegrityError:
                         raise ValueError("duplicate")
-                    seen.add(key)
                     col = dataset["columns"]
-                    accepted.append(dict(zip(CANONICAL, [dataset["id"], dataset["ancestry"], dataset["outcome"], dataset["role"], dataset["source_build"], "GRCh38", c, p, ref, alt, vid, tc, tp, tref, talt, pick(row, col["effect_allele"]), pick(row, col["other_allele"]), pick(row, col["beta"]), pick(row, col["se"]), pick(row, col["p_value"]), pick(row, col.get("eaf", []), False), pick(row, col.get("sample_size", []), False)])))
+                    accepted_writer.writerow(dict(zip(CANONICAL, [dataset["id"], dataset["ancestry"], dataset["outcome"], dataset["role"], dataset["source_build"], "GRCh38", c, p, ref, alt, vid, tc, tp, tref, talt, pick(row, col["effect_allele"]), pick(row, col["other_allele"]), pick(row, col["beta"]), pick(row, col["se"]), pick(row, col["p_value"]), pick(row, col.get("eaf", []), False), pick(row, col.get("sample_size", []), False)])))
+                    accepted_count += 1
                 except (ValueError, KeyError) as error:
                     reason = str(error)
                     if reason not in {"unmapped", "multi_mapped", "duplicate", "reference_allele_mismatch", "source_reference_allele_mismatch"}:
                         reason = "invalid_input:" + reason
-                    rejected.append({"dataset_id": dataset["id"], "source_line": line_no, "reason": reason,
+                    rejected_writer.writerow({"dataset_id": dataset["id"], "source_line": line_no, "reason": reason,
                                      "source_chromosome": row.get(dataset["columns"]["chromosome"][0], ""), "source_position": row.get(dataset["columns"]["position"][0], ""),
                                      "source_ref": row.get(dataset["columns"]["ref"][0], ""), "source_alt": row.get(dataset["columns"]["alt"][0], ""), "source_variant_id": row.get(dataset["columns"]["variant_id"][0], "")})
-        output = outdir / f"{dataset['id']}.canonical.tsv"; reject = outdir / f"{dataset['id']}.rejected.tsv"
-        write_tsv(output, CANONICAL, accepted)
-        write_tsv(reject, ["dataset_id", "source_line", "reason", "source_chromosome", "source_position", "source_ref", "source_alt", "source_variant_id"], rejected)
-        counts = defaultdict(int)
-        for item in rejected: counts[item["reason"]] += 1
-        manifests.append({"dataset_id": dataset["id"], "ancestry": dataset["ancestry"], "outcome": dataset["outcome"], "role": dataset["role"], "source_build": dataset["source_build"], "target_build": "GRCh38", "input": str(source), "output": str(output), "accepted": len(accepted), "rejected": len(rejected), "rejection_counts": dict(counts), "chain": str(chain_path), "chain_sha256": sha256(chain_path), "source_reference": str(source_reference_path), "source_reference_sha256": sha256(source_reference_path), "target_reference": str(reference_path), "target_reference_sha256": sha256(reference_path)})
-    (outdir / "dataset_manifest.json").write_text(json.dumps(manifests, indent=2) + "\n", encoding="utf-8")
+                    rejected_count += 1; counts[reason] += 1
+        connection.close(); database.unlink(missing_ok=True)
+        manifests.append({"dataset_id": dataset["id"], "ancestry": dataset["ancestry"], "outcome": dataset["outcome"], "role": dataset["role"], "source_build": dataset["source_build"], "target_build": "GRCh38", "input": str(source), "output": str(output), "accepted": accepted_count, "rejected": rejected_count, "rejection_counts": dict(counts), "chain": str(chain_path), "chain_sha256": sha256(chain_path), "source_reference": str(source_reference_path), "source_reference_sha256": sha256(source_reference_path), "target_reference": str(reference_path), "target_reference_sha256": sha256(reference_path)})
+    manifest_path = outdir / "dataset_manifest.json"
+    previous = json.loads(manifest_path.read_text()) if dataset_id and manifest_path.exists() else []
+    merged = {item["dataset_id"]: item for item in previous}
+    merged.update({item["dataset_id"]: item for item in manifests})
+    manifest_path.write_text(json.dumps(list(merged.values()), indent=2) + "\n", encoding="utf-8")
 
 
 def write_tsv(path: Path, fields: list[str], rows: list[dict]) -> None:
@@ -254,4 +295,5 @@ def write_tsv(path: Path, fields: list[str], rows: list[dict]) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__); parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output-dir", type=Path, help="Override config output_dir (useful for immutable fixture runs).")
-    args = parser.parse_args(); run(args.config, args.output_dir)
+    parser.add_argument("--dataset-id", help="Process only one selected dataset (for resumable batch execution).")
+    args = parser.parse_args(); run(args.config, args.output_dir, args.dataset_id)
