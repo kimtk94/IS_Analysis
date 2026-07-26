@@ -1,0 +1,10 @@
+{
+  "full_summary_statistics": "full_summary.tsv",
+  "output_dir": "unused",
+  "ld_reference_panels": {
+    "EUR": {"name": "SYNTHETIC_EUR_PANEL", "genome_build": "GRCh38", "ancestry": "EUR", "sample_provenance": "Three synthetic EUR-like samples for committed tests only", "matrix": "eur.ld.tsv", "variants": "eur.variants.tsv"},
+    "EAS": {"name": "SYNTHETIC_EAS_PANEL", "genome_build": "GRCh38", "ancestry": "EAS", "sample_provenance": "Three different synthetic EAS-like samples for committed tests only", "matrix": "eas.ld.tsv", "variants": "eas.variants.tsv"}
+  },
+  "methods": {"instrument_p_threshold": 0.000001, "clump_r2": 0.01, "prior_effect_variance": 0.04, "credible_set_probability": 0.95, "cross_ancestry_integration": "normalized_pip_product"},
+  "gates": {"max_variant_missing_rate": 0.0, "matrix_tolerance": 0.00000001, "min_effective_sample_size": 1000, "min_locus_coverage": 1.0}
+}

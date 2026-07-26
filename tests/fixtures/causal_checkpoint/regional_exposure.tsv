@@ -1,0 +1,7 @@
+variant_id	beta	se
+rs-direct	0.20	0.04
+rs-swapped	0.15	0.03
+rs-complement	0.10	0.025
+rs-palindromic	0.12	0.03
+rs-region-5	0.02	0.04
+rs-exposure-only	0.01	0.05

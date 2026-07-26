@@ -1,0 +1,2 @@
+variant_id	build	chromosome	position	effect_allele	other_allele	beta	se	eaf
+rs-single	GRCh38	2	201	G	A	-0.10	0.03	0.75

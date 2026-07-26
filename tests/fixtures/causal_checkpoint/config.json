@@ -1,0 +1,17 @@
+{
+  "instrument_exposure": "exposure_instruments.tsv",
+  "instrument_outcome": "outcome_instruments.tsv",
+  "regional_exposure": "regional_exposure.tsv",
+  "regional_outcome": "regional_outcome.tsv",
+  "output_dir": "/tmp/is_analysis_causal_checkpoint",
+  "palindromic_eaf_range": [0.42, 0.58],
+  "palindromic_max_eaf_difference": 0.08,
+  "minimum_instruments_for_robust_methods": 3,
+  "minimum_common_snps": 5,
+  "minimum_region_coverage": 0.8,
+  "multiple_signal_method": "susie",
+  "coloc_priors": [
+    {"name": "default", "p1": 0.0001, "p2": 0.0001, "p12": 0.00001, "effect_variance": 0.04},
+    {"name": "skeptical", "p1": 0.00001, "p2": 0.00001, "p12": 0.000001, "effect_variance": 0.04}
+  ]
+}

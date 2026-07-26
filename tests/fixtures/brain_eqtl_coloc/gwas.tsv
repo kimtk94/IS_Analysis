@@ -1,0 +1,4 @@
+chromosome	position	ref	alt	beta	se
+1	100	A	G	0.20	0.05
+1	200	C	T	0.10	0.05
+1	300	G	A	-0.15	0.05
