@@ -1,0 +1,2 @@
+chromosome	base_pair_location	ref	alt	variant_id	effect_allele	other_allele	beta	standard_error	p_value	effect_allele_frequency	sample_size
+chr2	10	C	T	rs-eas	T	C	0.12	0.03	1e-5	0.25	500
