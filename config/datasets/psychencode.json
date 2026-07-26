@@ -1,0 +1,17 @@
+{
+  "dataset_id": "psychencode_brain_eqtl",
+  "display_name": "PsychENCODE brain eQTL",
+  "genome_build": "GRCh37",
+  "resolution": "bulk_tissue",
+  "tissues_or_cell_types": ["prefrontal cortex"],
+  "sample_size": {"unit": "brains", "value": 1387, "note": "published cross-cohort bulk cortical eQTL analysis; select a release explicitly"},
+  "ancestry": "multi-cohort; ancestry composition is release-specific",
+  "qtl_unit": "gene-variant cis-eQTL",
+  "evidence_family": "PSYCHENCODE_BRAINSEQ_CMC_ROSMAP_OVERLAP",
+  "access": {
+    "public_summary_statistics": "release-dependent Synapse summary products",
+    "controlled_access": "individual-level genotype/RNA-seq and some complete statistics require Synapse/dbGaP approval",
+    "default_input_status": "ACCESS_REVIEW_REQUIRED"
+  },
+  "source": {"cohort": "PsychENCODE Consortium collections", "publication": "Wang et al., Science 2018, doi:10.1126/science.aat8464"}
+}

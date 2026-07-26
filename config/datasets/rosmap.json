@@ -1,0 +1,13 @@
+{
+  "dataset_id": "rosmap_dlpfc_eqtl",
+  "display_name": "ROSMAP DLPFC eQTL",
+  "genome_build": "GRCh37",
+  "resolution": "bulk_tissue",
+  "tissues_or_cell_types": ["dorsolateral prefrontal cortex"],
+  "sample_size": {"unit": "brains", "value": 494, "note": "published bulk RNA-seq eQTL analysis; exact N varies by molecular phenotype"},
+  "ancestry": "predominantly European ancestry",
+  "qtl_unit": "gene-variant cis-eQTL",
+  "evidence_family": "ROSMAP",
+  "access": {"public_summary_statistics": "selected summary products may be public on AD Knowledge Portal", "controlled_access": "individual-level and protected molecular data require Synapse/DUA approval", "default_input_status": "ACCESS_REVIEW_REQUIRED"},
+  "source": {"cohort": "Religious Orders Study and Rush Memory and Aging Project", "publication": "Mostafavi et al., Nature Neuroscience 2018, doi:10.1038/s41593-018-0154-9"}
+}
