@@ -30,7 +30,13 @@ no_f_filter <- has_flag("--no-f-filter")
 force <- has_flag("--force")
 test_mode <- has_flag("--test")
 max_file_lines <- as.integer(get_arg("--max-file-lines", if (test_mode) "200" else "0"))
+focus_gene <- toupper(trimws(as.character(get_arg("--focus-gene", ""))))
+focus_max_bytes <- as.integer(get_arg("--focus-max-bytes", "0"))
+other_max_file_lines <- as.integer(get_arg("--other-max-file-lines", "0"))
 if (is.na(max_file_lines) || max_file_lines < 0) stop("[ERROR] --max-file-lines must be a non-negative integer")
+if (is.na(focus_max_bytes) || focus_max_bytes < 0) stop("[ERROR] --focus-max-bytes must be a non-negative integer")
+if (is.na(other_max_file_lines) || other_max_file_lines < 0) stop("[ERROR] --other-max-file-lines must be a non-negative integer")
+if ((focus_max_bytes > 0 || other_max_file_lines > 0) && focus_gene == "") stop("[ERROR] --focus-gene is required for focused test limits")
 
 if (is.null(gene_file)) stop("[ERROR] --gene-file is required")
 if (!file.exists(gene_file)) stop("[ERROR] gene file does not exist: ", gene_file)
@@ -63,7 +69,8 @@ if (!is.null(source_file_list)) {
   if (!length(allowed_source_files)) stop("[ERROR] source file list is empty: ", source_file_list)
 }
 
-msg("[INFO] batch_id=", batch_id, " genes=", length(target_genes), " eur_first=", eur_first, " copy_to_local=", copy_to_local, " test=", test_mode, " max_file_lines=", max_file_lines)
+msg("[INFO] batch_id=", batch_id, " genes=", length(target_genes), " eur_first=", eur_first, " copy_to_local=", copy_to_local, " test=", test_mode, " max_file_lines=", max_file_lines,
+    " focus_gene=", focus_gene, " focus_max_bytes=", focus_max_bytes, " other_max_file_lines=", other_max_file_lines)
 msg("[INFO] rawdir=", rawdir, " outdir=", outdir, " tmpdir=", tmp_root)
 if (!is.null(allowed_source_files)) msg("[INFO] exact source_file filter enabled: ", length(allowed_source_files), " files")
 
@@ -325,14 +332,20 @@ build_tar_cmd <- function(tar_file, inner) {
   cmd
 }
 
-read_pqtl_from_tar_fast <- function(tar_file) {
+read_pqtl_from_tar_fast <- function(tar_file, gene) {
   inner <- detect_summary_file_in_tar(tar_file)
   cmd <- build_tar_cmd(tar_file, inner)
+  if (focus_gene != "" && gene == focus_gene && focus_max_bytes > 0) {
+    # The remote tar must still be downloaded as a complete archive.  This cap
+    # limits the decompressed summary member retained by the focused test run.
+    cmd <- paste(cmd, "| head -c", focus_max_bytes)
+  }
   header <- fread(cmd = cmd, nrows = 0, showProgress = FALSE, data.table = TRUE)
   select_cols <- choose_needed_columns(names(header))
   if (!length(select_cols)) stop("Could not identify useful columns in ", basename(tar_file))
-  if (max_file_lines > 0) {
-    data_rows <- max(0L, max_file_lines - 1L)
+  gene_max_lines <- if (focus_gene != "" && gene != focus_gene && other_max_file_lines > 0) other_max_file_lines else max_file_lines
+  if (gene_max_lines > 0) {
+    data_rows <- max(0L, gene_max_lines - 1L)
     return(fread(cmd = cmd, select = select_cols, nrows = data_rows, showProgress = FALSE, data.table = TRUE))
   }
   fread(cmd = cmd, select = select_cols, showProgress = FALSE, data.table = TRUE)
@@ -355,7 +368,7 @@ standardize_one <- function(gene, ancestry) {
     msg("[PROCESS] ", batch_id, " | ", gene, " | ", ancestry, " | ", basename(tar0))
     one <- tryCatch({
       tar <- stage_tar_to_local(tar0, ancestry)
-      raw <- read_pqtl_from_tar_fast(tar); st[, n_raw_rows := nrow(raw)]
+      raw <- read_pqtl_from_tar_fast(tar, gene); st[, n_raw_rows := nrow(raw)]
       std <- standardize_pqtl(raw, gene, ancestry, basename(tar0)); rm(raw); gc(FALSE)
       canonical <- to_canonical(std, basename(tar0))
       dir.create(dirname(full_out), recursive = TRUE, showWarnings = FALSE)

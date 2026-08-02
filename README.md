@@ -1,8 +1,12 @@
 # IS_Analysis
 
+새 Git 저장소와 Drive V3 workspace로 이전할 때는
+[`docs/new_repository_migration_guide.md`](docs/new_repository_migration_guide.md)를
+먼저 따른다.
+
 This repository prepares paired UKB-PPP EUR/EAS pQTL exposures for downstream
 analysis. The production workflow is batch-oriented and restartable: it obtains
-10 paired genes at a time, validates every archive, filters instruments, and
+15 paired genes at a time, validates every archive, filters instruments, and
 writes EUR and EAS outputs separately.
 
 ## Real-data batch workflow
@@ -148,12 +152,53 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --outdir "${WORK_ROOT}/results/exposure_batches" \
   --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
-  --batch-size 10 \
+  --batch-size 15 \
   --p-threshold 5e-8 \
   --run \
   --delete-raw-after-processing \
   --stop-on-error
 ```
+
+For a storage-bounded IDO1 test, first mount Google Drive and create the V3
+workspace. The setup helper creates missing directories under
+`/content/drive/MyDrive/IS_Analysis_V3`; when available, it copies only the
+download manifest and GRCh38 coordinate table from V2. It never copies raw
+archives or derived results:
+
+```bash
+CODE_ROOT="/content/IS_Analysis_V2"
+export WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V3"
+cd "${CODE_ROOT}"
+bash scripts/setup_ido1_test_drive.sh
+source "${WORK_ROOT}/ido1_test.env"
+```
+
+Then select only the 15-gene batch containing
+`IDO1`, read at most 20 MB of each decompressed IDO1 summary member, and retain
+at most 1,000 lines (including the header) for every other gene:
+
+```bash
+python3 -u "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --qc-dir "${IDO1_TEST_QC_DIR}" \
+  --outdir "${IDO1_TEST_OUTDIR}" \
+  --standardized-dir "${IDO1_TEST_STANDARDIZED_DIR}" \
+  --instrument-dir "${IDO1_TEST_INSTRUMENT_DIR}" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
+  --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
+  --batch-size 15 \
+  --focus-gene IDO1 \
+  --focus-max-bytes 20000000 \
+  --other-max-file-lines 1000 \
+  --run \
+  --stop-on-error
+```
+
+The tar transport itself is still downloaded and verified in full because a
+compressed archive member cannot be safely fetched as an arbitrary byte range.
+The 20 MB limit applies to the decompressed IDO1 summary-statistic stream used
+to materialize the test data. Raw deletion is intentionally omitted from this
+test command.
 
 The runner flushes current batch and phase messages to stdout. If Colab's
 `%%bash` output remains buffered in the notebook UI, use `python3 -u` in place
