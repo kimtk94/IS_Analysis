@@ -27,7 +27,7 @@ from typing import Any
 ANCESTRIES = ("EUR", "EAS")
 REQUIRED_DOWNLOAD_COLUMNS = {"ancestry", "gene_symbol", "source_file", "url"}
 COMPLETED_BATCH_STATUSES = {"completed", "completed_raw_deleted", "completed_raw_retained"}
-RESTART_CLEANUP_STATUSES = {"running", "metadata_fetch_failed", "download_or_verification_failed", "processing_failed"}
+RESTART_CLEANUP_STATUSES = {"running", "metadata_fetch_failed", "download_or_verification_failed", "canonical_extraction_failed", "instrument_selection_failed"}
 
 
 def now() -> str:
@@ -404,6 +404,40 @@ def processing_status_allows_cleanup(status_path: Path, raw_files: list[Path]) -
     return True, "all_sources_processed"
 
 
+def classify_processing_status(status_paths: list[Path]) -> tuple[str, str]:
+    """Distinguish canonical extraction failures from downstream selection failures."""
+    rows: list[dict[str, str]] = []
+    for path in status_paths:
+        if not path.exists():
+            return "canonical_extraction_failed", f"missing status file: {path}"
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows.extend(csv.DictReader(handle, delimiter="\t"))
+    if not rows or any(row.get("standardization_status") != "completed" for row in rows):
+        return "canonical_extraction_failed", "one or more source archives were not standardized"
+    failed_selection = [row.get("instrument_selection_status", "") for row in rows if row.get("instrument_selection_status", "").startswith("failed_")]
+    if failed_selection:
+        return "instrument_selection_failed", ",".join(sorted(set(failed_selection)))
+    return "completed", "all canonical extractions and instrument selections completed"
+
+
+def canonical_outputs_cover_sources(standardized_dir: Path, batch_id: str, sources: list[dict[str, str]]) -> tuple[bool, str]:
+    """Verify Drive canonical products enumerate every manifest archive before raw cleanup."""
+    expected = {(row["ancestry"], Path(row["source_file"]).name) for row in sources if row.get("source_file")}
+    observed: set[tuple[str, str]] = set()
+    for ancestry in ANCESTRIES:
+        folder = standardized_dir / ancestry / batch_id
+        for path in folder.glob("*.tsv") if folder.is_dir() else []:
+            with path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle, delimiter="\t"):
+                    source = Path(row.get("source_archive", "")).name
+                    if source:
+                        observed.add((ancestry, source))
+    missing = sorted(expected - observed)
+    if missing:
+        return False, "canonical_missing_manifest_sources: " + ",".join(f"{ancestry}/{source}" for ancestry, source in missing)
+    return True, f"canonical_coverage_verified:{len(expected)}"
+
+
 def remove_raw_files(raw_files: list[Path], status_path: Path) -> list[dict[str, str]]:
     """Delete only files backed by successful per-source processing status."""
     allowed, reason = processing_status_allows_cleanup(status_path, raw_files)
@@ -427,6 +461,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delete-existing-raw-after-processing", action="store_true", help="Delete staged originals in --existing-raw-base only after successful processing and staging cleanup.")
     parser.add_argument("--download-manifest", help="TSV: ancestry, gene_symbol, source_file, url; optional expected_size_bytes, sha256, md5, synapse_id.")
     parser.add_argument("--outdir", default="results/exposure_batches")
+    parser.add_argument("--standardized-dir", default="results/standardized/pqtl", help="Drive-backed canonical full-summary root.")
+    parser.add_argument("--instrument-dir", default="results/instrument_candidates")
     parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--only-batch", help="Comma-separated batch IDs, e.g. batch_001,batch_002.")
@@ -459,6 +495,7 @@ def main() -> None:
     if args.delete_existing_raw_after_processing and (not args.existing_raw_base or not args.delete_raw_after_processing):
         raise SystemExit("[ERROR] --delete-existing-raw-after-processing requires --existing-raw-base and --delete-raw-after-processing")
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    standardized_dir, instrument_dir = Path(args.standardized_dir), Path(args.instrument_dir)
     if args.download_manifest and not Path(args.download_manifest).is_file():
         raise SystemExit(f"[ERROR] Download manifest not found: {Path(args.download_manifest)}")
     existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
@@ -487,14 +524,8 @@ def main() -> None:
             repo_root / "results/qc/gene_coordinates_hg38.tsv",
         )
         gene_coordinate_path = next((path for path in candidates if path.is_file()), None)
-    if processing_requested and (gene_coordinate_path is None or not gene_coordinate_path.is_file()):
-        detail = f": {gene_coordinate_path}" if gene_coordinate_path is not None else ""
-        raise SystemExit(
-            "[ERROR] GRCh38 gene coordinate table not found"
-            f"{detail}. Supply --gene-coordinate-file with columns "
-            "gene_symbol, chr, start, end, genome_build. To create it during setup, "
-            "run scripts/build_gene_coordinates_grch38.py."
-        )
+    # Coordinate existence/schema/build are deliberately validated by R only
+    # after every source archive has produced its canonical full summary.
 
     pd = ensure_pandas()
     existing_raw_inventory = list_existing_raw_names(existing_raw_base) if existing_raw_base else None
@@ -659,27 +690,37 @@ def main() -> None:
         gene_file = qc_dir / "gene_batches" / f"{batch_id}.txt"
         gene_file.parent.mkdir(parents=True, exist_ok=True)
         gene_file.write_text("\n".join(batch_genes) + "\n", encoding="utf-8")
-        failed = False
+        status_paths = []
         for ancestry in ANCESTRIES:
             print(f"[INFO] Batch {position}/{len(selected_batches)}: processing {ancestry}", flush=True)
             output = outdir / ancestry / f"exposure_{batch_id}.tsv"
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            command = ["Rscript", str(rscript_path), "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry, "--gene-coordinate-file", str(gene_coordinate_path)]
+            command = ["Rscript", str(rscript_path), "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry, "--standardized-dir", str(standardized_dir), "--instrument-dir", str(instrument_dir)]
+            if gene_coordinate_path is not None:
+                command.extend(["--gene-coordinate-file", str(gene_coordinate_path)])
             result = subprocess.run(command, check=False, text=True, capture_output=True)
             log.write_text(result.stdout + result.stderr, encoding="utf-8")
             if result.returncode or not output.exists():
-                failed = True
                 print(f"[ERROR] {batch_id} {ancestry}; see {log}", flush=True)
+            status_paths.append(outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv")
+        processing_status, processing_detail = classify_processing_status(status_paths)
+        failed = processing_status != "completed"
         if failed:
-            batch_df.loc[index, "status"] = "processing_failed"
-            batch_df.loc[index, "raw_cleanup"] = "retained_processing_failed"
+            batch_df.loc[index, "status"] = processing_status
+            batch_df.loc[index, "raw_cleanup"] = f"retained_{processing_status}"
+            record_progress(batch_id, position, processing_status, processing_detail)
         elif args.delete_raw_after_processing:
             cleanup_rows = []
-            for ancestry in ANCESTRIES:
-                status_path = outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv"
-                for row in remove_raw_files(raw_files_by_ancestry[ancestry], status_path):
-                    cleanup_rows.append({"batch_id": batch_id, "ancestry": ancestry, **row})
+            covered, coverage_reason = canonical_outputs_cover_sources(standardized_dir, batch_id, source_rows)
+            if not covered:
+                for ancestry in ANCESTRIES:
+                    cleanup_rows.extend({"batch_id": batch_id, "ancestry": ancestry, "raw_file": str(path), "action": "retained", "reason": coverage_reason} for path in raw_files_by_ancestry[ancestry])
+            else:
+                for ancestry in ANCESTRIES:
+                    status_path = outdir / ancestry / "logs" / f"{batch_id}_gene_status.tsv"
+                    for row in remove_raw_files(raw_files_by_ancestry[ancestry], status_path):
+                        cleanup_rows.append({"batch_id": batch_id, "ancestry": ancestry, **row})
             if args.delete_existing_raw_after_processing:
                 for row in list(cleanup_rows):
                     original = staged_existing.get(row["raw_file"])
