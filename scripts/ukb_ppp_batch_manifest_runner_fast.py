@@ -434,6 +434,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rerun-completed", action="store_true", help="Run batches marked completed in an existing batch manifest.")
     parser.add_argument("--p-threshold", default="5e-8")
     parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
+    parser.add_argument(
+        "--gene-coordinate-file",
+        help="GRCh38/hg38 gene coordinate TSV required for cis instrument selection.",
+    )
     parser.add_argument("--tmpdir", default="/content/ukbppp_tmp")
     parser.add_argument("--download-only", action="store_true")
     parser.add_argument(
@@ -454,14 +458,45 @@ def main() -> None:
         raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     if args.delete_existing_raw_after_processing and (not args.existing_raw_base or not args.delete_raw_after_processing):
         raise SystemExit("[ERROR] --delete-existing-raw-after-processing requires --existing-raw-base and --delete-raw-after-processing")
-    pd = ensure_pandas()
     base, outdir, qc_dir = Path(args.base), Path(args.outdir), Path(args.qc_dir)
+    if args.download_manifest and not Path(args.download_manifest).is_file():
+        raise SystemExit(f"[ERROR] Download manifest not found: {Path(args.download_manifest)}")
+    existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
+    if existing_raw_base is not None and not existing_raw_base.is_dir():
+        raise SystemExit(f"[ERROR] Existing raw base is not a directory: {existing_raw_base}")
+    if existing_raw_base is not None and existing_raw_base.resolve() == base.resolve():
+        raise SystemExit("[ERROR] --existing-raw-base must be different from --base (the staging raw root)")
+
     rscript_path = Path(args.rscript)
     if not rscript_path.is_absolute():
         rscript_path = Path(__file__).resolve().parent.parent / rscript_path
-    if not rscript_path.is_file():
+    processing_requested = args.run and not args.download_only
+    if processing_requested and not rscript_path.is_file():
         raise SystemExit(f"[ERROR] R preparation script not found: {rscript_path}")
-    existing_raw_base = Path(args.existing_raw_base) if args.existing_raw_base else None
+    if processing_requested and shutil.which("Rscript") is None:
+        raise SystemExit("[ERROR] Rscript executable not found in PATH")
+
+    gene_coordinate_path = Path(args.gene_coordinate_file) if args.gene_coordinate_file else None
+    if processing_requested and gene_coordinate_path is None:
+        repo_root = Path(__file__).resolve().parent.parent
+        work_root = base.parents[3] if len(base.parents) > 3 else base.parent
+        candidates = (
+            work_root / "data/reference/gene_coordinates_hg38.tsv",
+            work_root / "results/qc/gene_coordinates_hg38.tsv",
+            repo_root / "data/reference/gene_coordinates_hg38.tsv",
+            repo_root / "results/qc/gene_coordinates_hg38.tsv",
+        )
+        gene_coordinate_path = next((path for path in candidates if path.is_file()), None)
+    if processing_requested and (gene_coordinate_path is None or not gene_coordinate_path.is_file()):
+        detail = f": {gene_coordinate_path}" if gene_coordinate_path is not None else ""
+        raise SystemExit(
+            "[ERROR] GRCh38 gene coordinate table not found"
+            f"{detail}. Supply --gene-coordinate-file with columns "
+            "gene_symbol, chr, start, end, genome_build. To create it during setup, "
+            "run scripts/build_gene_coordinates_grch38.py."
+        )
+
+    pd = ensure_pandas()
     existing_raw_inventory = list_existing_raw_names(existing_raw_base) if existing_raw_base else None
     if existing_raw_base is None:
         print("[INFO] Existing raw mode: OFF (all missing sources use normal download handling)", flush=True)
@@ -630,7 +665,7 @@ def main() -> None:
             output = outdir / ancestry / f"exposure_{batch_id}.tsv"
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            command = ["Rscript", str(rscript_path), "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry]
+            command = ["Rscript", str(rscript_path), "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry, "--gene-coordinate-file", str(gene_coordinate_path)]
             result = subprocess.run(command, check=False, text=True, capture_output=True)
             log.write_text(result.stdout + result.stderr, encoding="utf-8")
             if result.returncode or not output.exists():
