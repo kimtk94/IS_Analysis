@@ -128,7 +128,8 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
   --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
   --outdir "${WORK_ROOT}/results/exposure_batches" \
-  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv"
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
+  --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv"
 ```
 
 Then download, validate, and process all batches. The default batch size is 10.
@@ -146,6 +147,7 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
   --outdir "${WORK_ROOT}/results/exposure_batches" \
   --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
+  --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
   --batch-size 10 \
   --p-threshold 5e-8 \
   --run \
@@ -156,6 +158,27 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
 The runner flushes current batch and phase messages to stdout. If Colab's
 `%%bash` output remains buffered in the notebook UI, use `python3 -u` in place
 of `python3` in the same command.
+
+Instrument processing requires a tab-separated GRCh38/hg38 gene-coordinate
+table with `gene_symbol`, `chr`, `start`, `end`, and `genome_build` columns.
+This production reference is **not committed to the repository and is not
+created by the batch runner**. Create it once during the network-enabled Colab
+setup phase from the download manifest:
+
+```bash
+python3 "${CODE_ROOT}/scripts/build_gene_coordinates_grch38.py" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
+  --output "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv"
+```
+
+The helper queries Ensembl by gene symbol, writes the required GRCh38 schema,
+and exits nonzero with a `.missing.txt` report if any manifest symbol cannot be
+resolved. Review that report rather than substituting guessed coordinates.
+Pass it explicitly with `--gene-coordinate-file`. If that option is omitted,
+the runner checks `data/reference/gene_coordinates_hg38.tsv` and
+`results/qc/gene_coordinates_hg38.tsv` under both the Drive work root inferred
+from `--base` and the cloned repository. It stops during preflight when no
+coordinate table exists instead of reading every archive before R fails.
 
 ### Reuse existing raw archives
 
