@@ -238,4 +238,30 @@ test ! -s "${SMOKE_ROOT}/missing_instruments/EUR/exposure_missing_coordinate.tsv
   test "$(wc -l < "${SMOKE_ROOT}/missing_instruments/EUR/exposure_missing_coordinate.tsv")" -eq 1
 echo "[OK] Missing coordinate rejected; no valid instrument rows emitted"
 
+echo "[TEST] Invalid coordinate build preserves canonical output and records split stage status"
+INVALID_BUILD_OUT="${SMOKE_ROOT}/invalid_build_output"
+INVALID_BUILD_STANDARDIZED="${SMOKE_ROOT}/invalid_build_standardized"
+if Rscript scripts/01_prepare_exposure_fast.R \
+  --gene-file "${DUPLICATE_GENE_FILE}" --batch-id invalid_build \
+  --outdir "${INVALID_BUILD_OUT}" --rawdir "${DUPLICATE_RAW_DIR}" --ancestries EUR \
+  --gene-coordinate-file tests/fixtures/gene_coordinates_grch37.tsv \
+  --standardized-dir "${INVALID_BUILD_STANDARDIZED}" \
+  --instrument-dir "${SMOKE_ROOT}/invalid_build_instruments"; then
+  echo "[ERROR] GRCh37 coordinate unexpectedly passed instrument selection" >&2
+  exit 1
+fi
+"${PYTHON_BIN}" - "${INVALID_BUILD_OUT}/logs/invalid_build_gene_status.tsv" "${INVALID_BUILD_STANDARDIZED}/EUR/invalid_build" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+status_path, canonical_dir = Path(sys.argv[1]), Path(sys.argv[2])
+with status_path.open(newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+assert rows and all(row["standardization_status"] == "completed" for row in rows)
+assert all(row["instrument_selection_status"] == "failed_invalid_coordinate_build" for row in rows)
+assert len(list(canonical_dir.glob("*.tsv"))) == 2, "Both archive canonical outputs must survive coordinate failure"
+print("[OK] canonical outputs retained and stage-specific coordinate failure recorded")
+PY
+
 echo "[OK] Codex smoke test completed"

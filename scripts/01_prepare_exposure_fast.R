@@ -231,22 +231,29 @@ load_gene_coords <- function() {
   for (p in paths) {
     if (file.exists(p)) {
       x <- fread(p); names(x) <- tolower(names(x))
-      if (all(c("gene_symbol", "chr", "start", "end", "genome_build") %in% names(x))) {
-        x[, gene_symbol := safe_upper(gene_symbol)]
-        x[, chr := as.character(chr)]
-        x[, start := as.integer(start)]
-        x[, end := as.integer(end)]
-        builds <- toupper(gsub("[^A-Z0-9]", "", as.character(x$genome_build)))
-        if (any(!builds %in% c("GRCH38", "HG38"))) stop("[ERROR] Gene coordinate genome_build must be GRCh38/hg38: ", p)
-        msg("[INFO] Loaded GRCh38 gene coordinates: ", p)
-        return(x)
-      }
+      required <- c("gene_symbol", "chr", "start", "end", "genome_build")
+      if (!all(required %in% names(x))) stop(structure(
+        list(message = paste0("Gene coordinate schema is missing required columns: ", paste(setdiff(required, names(x)), collapse=", "), ": ", p)),
+        class = c("invalid_coordinate_schema", "error", "condition")))
+      builds <- toupper(gsub("[^A-Z0-9]", "", as.character(x$genome_build)))
+      if (any(is.na(builds) | !builds %in% c("GRCH38", "HG38"))) stop(structure(
+        list(message = paste0("Gene coordinate genome_build must be GRCh38/hg38: ", p)),
+        class = c("invalid_coordinate_build", "error", "condition")))
+      x[, gene_symbol := safe_upper(gene_symbol)]
+      x[, chr := as.character(chr)]
+      x[, start := as.integer(start)]
+      x[, end := as.integer(end)]
+      if (any(is.na(x$start) | is.na(x$end) | is.na(x$chr) | x$gene_symbol == "")) stop(structure(
+        list(message = paste0("Gene coordinate table contains invalid coordinate values: ", p)),
+        class = c("invalid_coordinate_schema", "error", "condition")))
+      msg("[INFO] Loaded and validated GRCh38 gene coordinates: ", p)
+      return(x)
     }
   }
-  msg("[ERROR] No usable GRCh38 gene coordinate table found (required columns: gene_symbol, chr, start, end, genome_build).")
-  NULL
+  stop(structure(list(message = "No gene coordinate table found (required columns: gene_symbol, chr, start, end, genome_build)"),
+    class = c("missing_coordinate_file", "error", "condition")))
 }
-gene_coords <- load_gene_coords()
+gene_coords <- NULL
 
 apply_filters <- function(dt, gene) {
   if (!nrow(dt)) return(dt)
@@ -331,23 +338,20 @@ read_pqtl_from_tar_fast <- function(tar_file) {
   fread(cmd = cmd, select = select_cols, showProgress = FALSE, data.table = TRUE)
 }
 
-process_one <- function(gene, ancestry) {
-  status0 <- data.table(batch_id = batch_id, gene_symbol = gene, ancestry = ancestry, status = "pending", n_raw_rows = NA_integer_, n_filtered_rows = NA_integer_, tar_file = NA_character_, output_file = NA_character_, message = NA_character_)
+standardize_one <- function(gene, ancestry) {
+  status0 <- data.table(batch_id = batch_id, gene_symbol = gene, ancestry = ancestry, status = "pending",
+    standardization_status = "pending", instrument_selection_status = "pending",
+    n_raw_rows = NA_integer_, n_filtered_rows = NA_integer_, tar_file = NA_character_,
+    canonical_file = NA_character_, output_file = NA_character_, message = NA_character_)
   tars <- find_gene_tar(gene, ancestry)
-  if (!length(tars)) { status0[, `:=`(status = "missing_tar", message = "No valid .tar file found")]; return(list(data = NULL, status = status0)) }
-  res_list <- list(); st_list <- list()
+  if (!length(tars)) { status0[, `:=`(status = "canonical_extraction_failed", standardization_status = "failed", instrument_selection_status = "not_started", message = "No valid .tar file found")]; return(list(caches = list(), status = status0)) }
+  cache_list <- list(); st_list <- list()
   for (tar0 in tars) {
     panel <- safe_label(tools::file_path_sans_ext(basename(tar0)))
     out <- file.path(per_gene_dir, paste0(gene, "__", ancestry, "__", panel, ".tsv"))
     full_out <- file.path(standardized_dir, ancestry, batch_id, paste0(gene, "__", panel, ".tsv"))
-    st <- copy(status0); st[, `:=`(tar_file = tar0, output_file = out)]
-    if (!force && file.exists(out) && file.info(out)$size > 0 && file.exists(full_out) && file.info(full_out)$size > 0) {
-      existing <- tryCatch(fread(out, showProgress = FALSE), error = function(e) NULL)
-      if (!is.null(existing)) {
-        st[, `:=`(status = "completed_existing", n_filtered_rows = nrow(existing), message = "Existing output loaded")]
-        res_list[[length(res_list) + 1]] <- existing; st_list[[length(st_list) + 1]] <- st; next
-      }
-    }
+    cache <- file.path(tmp_root, "standardized_cache", batch_id, ancestry, paste0(gene, "__", panel, ".rds"))
+    st <- copy(status0); st[, `:=`(tar_file = tar0, canonical_file = full_out, output_file = out)]
     msg("[PROCESS] ", batch_id, " | ", gene, " | ", ancestry, " | ", basename(tar0))
     one <- tryCatch({
       tar <- stage_tar_to_local(tar0, ancestry)
@@ -356,53 +360,75 @@ process_one <- function(gene, ancestry) {
       canonical <- to_canonical(std, basename(tar0))
       dir.create(dirname(full_out), recursive = TRUE, showWarnings = FALSE)
       if (nrow(canonical)) fwrite(canonical, full_out, sep = "\t") else fwrite(empty_canonical_dt(), full_out, sep = "\t")
-      filt <- apply_filters(std, gene); rm(std); gc(FALSE)
-      st[, n_filtered_rows := nrow(filt)]
-      if (!nrow(filt)) { st[, `:=`(status = "no_variants_after_filter", message = "No variants after filters")]; write_empty_exposure(out); NULL }
-      else { fwrite(filt, out, sep = "\t"); st[, `:=`(status = "completed", message = "Saved")]; filt }
+      dir.create(dirname(cache), recursive = TRUE, showWarnings = FALSE)
+      saveRDS(std, cache); rm(std); gc(FALSE)
+      st[, `:=`(status = "standardization_completed", standardization_status = "completed", message = "Canonical full summary saved")]
+      cache
     }, error = function(e) {
-      st[, `:=`(status = "failed", message = conditionMessage(e))]
+      st[, `:=`(status = "canonical_extraction_failed", standardization_status = "failed", instrument_selection_status = "not_started", message = conditionMessage(e))]
       msg("[ERROR] ", gene, " | ", ancestry, " | ", basename(tar0), " | ", conditionMessage(e)); NULL
     })
-    if (!is.null(one)) res_list[[length(res_list) + 1]] <- one
+    if (!is.null(one)) cache_list[[length(cache_list) + 1]] <- one
     st_list[[length(st_list) + 1]] <- st
     gc(FALSE)
   }
-  list(data = if (length(res_list)) rbindlist(res_list, fill = TRUE) else NULL, status = rbindlist(st_list, fill = TRUE))
+  list(caches = cache_list, status = rbindlist(st_list, fill = TRUE))
 }
 
-# ---------- main ----------
-all_status <- list(); batch_result_files <- character(0)
-for (gene in target_genes) {
-  msg("[GENE] ", gene)
-  gene_results <- list()
-  if (eur_first && all(c("EUR", "EAS") %in% ancestries)) {
-    eur <- process_one(gene, "EUR")
-    if (!is.null(eur$data) && nrow(eur$data)) gene_results[[length(gene_results) + 1]] <- eur$data
-    all_status[[length(all_status) + 1]] <- eur$status; fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
-    if (is.null(eur$data) || !nrow(eur$data)) {
-      msg("[SKIP EAS] ", gene, " has no EUR instrument after filters")
-      all_status[[length(all_status) + 1]] <- data.table(batch_id = batch_id, gene_symbol = gene, ancestry = "EAS", status = "skipped_no_eur_instrument", n_raw_rows = NA_integer_, n_filtered_rows = 0L, tar_file = NA_character_, output_file = NA_character_, message = "EUR-first mode: EAS skipped because EUR had no instruments")
-      fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
-    } else {
-      eas <- process_one(gene, "EAS")
-      if (!is.null(eas$data) && nrow(eas$data)) gene_results[[length(gene_results) + 1]] <- eas$data
-      all_status[[length(all_status) + 1]] <- eas$status; fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
-    }
-  } else {
-    for (anc in ancestries) {
-      x <- process_one(gene, anc)
-      if (!is.null(x$data) && nrow(x$data)) gene_results[[length(gene_results) + 1]] <- x$data
-      all_status[[length(all_status) + 1]] <- x$status; fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
-    }
+# ---------- main: canonical extraction is completed before coordinate access ----------
+all_status <- list(); cache_records <- list(); batch_result_files <- character(0)
+for (gene in target_genes) for (anc in ancestries) {
+  msg("[STANDARDIZE] ", gene, " | ", anc)
+  x <- standardize_one(gene, anc)
+  offset <- length(all_status)
+  all_status[[offset + 1L]] <- x$status
+  if (length(x$caches)) for (i in seq_along(x$caches)) cache_records[[length(cache_records) + 1L]] <- list(
+    gene = gene, ancestry = anc, cache = x$caches[[i]], status_group = offset + 1L, status_row = i)
+  fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
+}
+
+standardization_failed <- rbindlist(all_status, fill = TRUE)[standardization_status == "failed"]
+if (nrow(standardization_failed)) {
+  staged <- file.path(tmp_root, "staged_tar", batch_id); if (dir.exists(staged)) unlink(staged, recursive=TRUE, force=TRUE)
+  stop("[ERROR] Canonical extraction failed for ", nrow(standardization_failed), " source archive(s); see ", gene_status_out)
+}
+
+# This is intentionally the first coordinate-file access in the program.
+coordinate_error <- NULL
+gene_coords <- tryCatch(load_gene_coords(), error = function(e) { coordinate_error <<- e; NULL })
+if (!is.null(coordinate_error)) {
+  failure <- if (inherits(coordinate_error, "invalid_coordinate_build")) "failed_invalid_coordinate_build" else if (inherits(coordinate_error, "invalid_coordinate_schema")) "failed_invalid_coordinate_schema" else "failed_missing_coordinate_file"
+  for (i in seq_along(all_status)) all_status[[i]][standardization_status == "completed", `:=`(
+    status = failure, instrument_selection_status = failure, message = conditionMessage(coordinate_error))]
+  fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
+  stop("[ERROR] Instrument selection coordinate validation failed after canonical write: ", conditionMessage(coordinate_error))
+}
+
+gene_results <- list()
+for (record in cache_records) {
+  st <- all_status[[record$status_group]][record$status_row]
+  out_path <- st$output_file[[1]]
+  selected <- tryCatch({
+    std <- readRDS(record$cache)
+    filt <- apply_filters(std, record$gene)
+    st[, n_filtered_rows := nrow(filt)]
+    if (!nrow(filt)) { write_empty_exposure(out_path); st[, `:=`(status="no_variants_after_filter", instrument_selection_status="completed_no_variants", message="No variants after filters")]; NULL }
+    else { fwrite(filt, out_path, sep="\t"); st[, `:=`(status="completed", instrument_selection_status="completed", message="Instrument candidates saved")]; filt }
+  }, error=function(e) {
+    failure <- if (grepl("No GRCh38 coordinate", conditionMessage(e), fixed=TRUE)) "failed_missing_gene_coordinate" else "failed_instrument_selection"
+    st[, `:=`(status=failure, instrument_selection_status=failure, message=conditionMessage(e))]
+    NULL
+  })
+  all_status[[record$status_group]][record$status_row] <- st
+  if (!is.null(selected)) gene_results[[length(gene_results) + 1L]] <- selected
+  fwrite(rbindlist(all_status, fill=TRUE), gene_status_out, sep="\t")
+}
+if (length(gene_results)) {
+  by_gene <- split(rbindlist(gene_results, fill=TRUE), by="gene_symbol", keep.by=TRUE)
+  for (gene in names(by_gene)) {
+    gout <- file.path(per_gene_dir, paste0(gene, "__combined.tsv")); fwrite(by_gene[[gene]], gout, sep="\t")
+    batch_result_files <- c(batch_result_files, gout)
   }
-  if (length(gene_results)) {
-    gdt <- rbindlist(gene_results, fill = TRUE)
-    gout <- file.path(per_gene_dir, paste0(gene, "__combined.tsv"))
-    fwrite(gdt, gout, sep = "\t"); batch_result_files <- c(batch_result_files, gout)
-    rm(gdt)
-  }
-  rm(gene_results); gc(FALSE)
 }
 
 msg("[INFO] Combining batch outputs")
@@ -430,7 +456,7 @@ for (anc in ancestries) {
 }
 
 fwrite(rbindlist(all_status, fill = TRUE), gene_status_out, sep = "\t")
-failed_status <- rbindlist(all_status, fill = TRUE)[status == "failed"]
+failed_status <- rbindlist(all_status, fill = TRUE)[grepl("^failed_", instrument_selection_status)]
 staged <- file.path(tmp_root, "staged_tar", batch_id)
 if (dir.exists(staged)) unlink(staged, recursive = TRUE, force = TRUE)
 msg("[INFO] Completed batch: ", batch_id)
