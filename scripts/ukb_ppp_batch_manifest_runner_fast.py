@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run restartable UKB-PPP exposure batches from real EUR/EAS source archives.
 
-Each batch contains paired EUR/EAS data for a fixed number of genes (10 by
+Each batch contains paired EUR/EAS data for a fixed number of genes (15 by
 default).  With ``--download-manifest``, the runner downloads only the source
 archives needed for the current batch, validates them, runs the exposure filter
 once per ancestry, and records all download and processing evidence.  The
@@ -464,11 +464,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--standardized-dir", default="results/standardized/pqtl", help="Drive-backed canonical full-summary root.")
     parser.add_argument("--instrument-dir", default="results/instrument_candidates")
     parser.add_argument("--qc-dir", default="results/qc/batch_pipeline")
-    parser.add_argument("--batch-size", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=15)
     parser.add_argument("--only-batch", help="Comma-separated batch IDs, e.g. batch_001,batch_002.")
     parser.add_argument("--max-batches", type=int)
     parser.add_argument("--rerun-completed", action="store_true", help="Run batches marked completed in an existing batch manifest.")
     parser.add_argument("--p-threshold", default="5e-8")
+    parser.add_argument("--focus-gene", help="Run only the batch containing this gene and apply focused test extraction limits.")
+    parser.add_argument("--focus-max-bytes", type=int, default=20_000_000, help="Maximum decompressed summary-member bytes read for --focus-gene (default: 20 MB).")
+    parser.add_argument("--other-max-file-lines", type=int, default=1000, help="Maximum lines, including the header, read for non-focus genes in the focused batch.")
     parser.add_argument("--rscript", default="scripts/01_prepare_exposure_fast.R")
     parser.add_argument(
         "--gene-coordinate-file",
@@ -490,6 +493,8 @@ def main() -> None:
     args = parse_args()
     if args.batch_size < 1:
         raise SystemExit("[ERROR] --batch-size must be positive")
+    if args.focus_gene and (args.focus_max_bytes < 1 or args.other_max_file_lines < 1):
+        raise SystemExit("[ERROR] focused test limits must be positive")
     if args.delete_raw_after_processing and not args.download_manifest:
         raise SystemExit("[ERROR] --delete-raw-after-processing requires --download-manifest for raw lifecycle tracking")
     if args.delete_existing_raw_after_processing and (not args.existing_raw_base or not args.delete_raw_after_processing):
@@ -558,9 +563,21 @@ def main() -> None:
     print("=" * 80, flush=True)
     print_batch_state(batch_df, "Current batch state")
     selected_batches = batch_df
+    if args.focus_gene:
+        focus_gene = args.focus_gene.strip().upper()
+        selected_batches = selected_batches[
+            selected_batches["genes"].map(lambda values: focus_gene in str(values).split(","))
+        ].copy()
+        if selected_batches.empty:
+            raise SystemExit(f"[ERROR] Focus gene not found in the paired-gene batch plan: {focus_gene}")
+        print(
+            f"[INFO] Focused test: gene={focus_gene} | focus_limit={args.focus_max_bytes} bytes | "
+            f"other_limit={args.other_max_file_lines} lines",
+            flush=True,
+        )
     if args.only_batch:
         wanted = {value.strip() for value in args.only_batch.split(",") if value.strip()}
-        selected_batches = batch_df[batch_df["batch_id"].isin(wanted)].copy()
+        selected_batches = selected_batches[selected_batches["batch_id"].isin(wanted)].copy()
     if args.run and not args.rerun_completed:
         completed = selected_batches["status"].isin(COMPLETED_BATCH_STATUSES)
         skipped = int(completed.sum())
@@ -697,6 +714,12 @@ def main() -> None:
             log = qc_dir / "processing_logs" / f"{batch_id}_{ancestry}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
             command = ["Rscript", str(rscript_path), "--gene-file", str(gene_file), "--batch-id", batch_id, "--outdir", str(outdir / ancestry), "--batch-output", str(output), "--rawdir", str(base), "--tmpdir", args.tmpdir, "--p-threshold", str(args.p_threshold), "--ancestries", ancestry, "--standardized-dir", str(standardized_dir), "--instrument-dir", str(instrument_dir)]
+            if args.focus_gene:
+                command.extend([
+                    "--focus-gene", args.focus_gene.strip().upper(),
+                    "--focus-max-bytes", str(args.focus_max_bytes),
+                    "--other-max-file-lines", str(args.other_max_file_lines),
+                ])
             if gene_coordinate_path is not None:
                 command.extend(["--gene-coordinate-file", str(gene_coordinate_path)])
             result = subprocess.run(command, check=False, text=True, capture_output=True)
