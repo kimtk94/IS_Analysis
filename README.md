@@ -36,6 +36,11 @@ downstream MR step. `logs/<batch>_gene_status.tsv` has one row per archive;
 check it for `completed`, `no_variants_after_filter`, or `failed` status before
 interpreting a batch result.
 
+The status file separates `standardization_status` from
+`instrument_selection_status`. Use the former to confirm that archive variants
+were parsed and written canonically, and the latter to confirm that coordinate
+validation and cis filtering completed.
+
 ### Build the manifest from Synapse metadata
 
 Do not manually fill archive sizes, hashes, or genes. In the data-setup
@@ -128,6 +133,8 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
   --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
   --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --standardized-dir "${WORK_ROOT}/results/standardized/pqtl" \
+  --instrument-dir "${WORK_ROOT}/results/instrument_candidates" \
   --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv"
 ```
@@ -146,6 +153,8 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
   --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
   --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --standardized-dir "${WORK_ROOT}/results/standardized/pqtl" \
+  --instrument-dir "${WORK_ROOT}/results/instrument_candidates" \
   --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
   --batch-size 10 \
@@ -177,8 +186,86 @@ resolved. Review that report rather than substituting guessed coordinates.
 Pass it explicitly with `--gene-coordinate-file`. If that option is omitted,
 the runner checks `data/reference/gene_coordinates_hg38.tsv` and
 `results/qc/gene_coordinates_hg38.tsv` under both the Drive work root inferred
-from `--base` and the cloned repository. It stops during preflight when no
-coordinate table exists instead of reading every archive before R fails.
+from `--base` and the cloned repository. A missing, malformed, or non-GRCh38
+coordinate table does **not** block archive parsing or canonical writes. It is
+validated only when cis instrument selection begins; canonical files remain
+available and the batch records `instrument_selection_failed`.
+
+### If variants have not been standardized yet
+
+Do not start with an MR or fine-mapping script. First run one small batch
+**without raw deletion** and inspect its canonical output:
+
+```bash
+python3 -u "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
+  --qc-dir "${WORK_ROOT}/results/qc/batch_pipeline" \
+  --outdir "${WORK_ROOT}/results/exposure_batches" \
+  --standardized-dir "${WORK_ROOT}/results/standardized/pqtl" \
+  --instrument-dir "${WORK_ROOT}/results/instrument_candidates" \
+  --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
+  --only-batch batch_001 \
+  --run \
+  --stop-on-error
+```
+
+After it finishes, verify these layers in order:
+
+1. `results/standardized/pqtl/{EUR,EAS}/batch_001/*.tsv` contains canonical
+   full-summary variants and a populated `source_archive` column.
+2. `results/exposure_batches/{EUR,EAS}/logs/batch_001_gene_status.tsv` reports
+   `standardization_status=completed`; inspect `instrument_selection_status`
+   separately.
+3. `results/instrument_candidates/{EUR,EAS}/exposure_batch_001.tsv` contains
+   only variants passing coordinate, cis, p-value, and F-statistic selection.
+   A header-only candidate file can be valid and does not imply that the
+   canonical full-summary file is empty.
+
+Use this Colab cell to inspect both ancestry status files. Keep the variable
+expansion on one line: `${WORK_ROOT}` is valid Bash syntax, while splitting the
+variable name across lines produces a `bad substitution` error.
+
+```bash
+%%bash
+WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V2"
+
+for ANC in EUR EAS; do
+  STATUS="${WORK_ROOT}/results/exposure_batches/${ANC}/logs/batch_001_gene_status.tsv"
+  echo "=== ${ANC} ==="
+  if [[ -s "${STATUS}" ]]; then
+    sed -n '1,30p' "${STATUS}"
+  else
+    echo "[MISSING] ${STATUS}"
+  fi
+done
+```
+
+Only after canonical source coverage and statuses look correct should the full
+run be repeated with `--delete-raw-after-processing`.
+
+### Estimate a batch size with at least one instrument-positive gene
+
+After a representative pilot has completed, estimate the batch size whose
+modelled probability of containing one or more genes with filtered instruments
+is at least 95%:
+
+```bash
+python3 "${CODE_ROOT}/scripts/estimate_instrument_batch_size.py" \
+  "${WORK_ROOT}/results/exposure_batches/EUR/logs" \
+  "${WORK_ROOT}/results/exposure_batches/EAS/logs" \
+  --target-probability 0.95 \
+  --ancestry-rule any
+```
+
+For an observed per-gene success rate `p`, the command reports
+`ceil(log(1 - target) / log(1 - p))`. Use `--ancestry-rule all` if a gene must
+have instruments in every observed ancestry. Add `--conservative` to use the
+95% Wilson lower confidence bound for `p`, which produces a larger, safer batch
+size when the pilot is small. This is a probability estimate—not a guarantee—
+because genes differ in cis signal strength and are not necessarily independent.
+If the pilot has no successful genes, the command reports `NA` and requests a
+larger pilot rather than inventing a batch size.
 
 ### Reuse existing raw archives
 
