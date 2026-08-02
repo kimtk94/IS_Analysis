@@ -48,8 +48,15 @@ bash -n scripts/colab_download_grch38_liftover_references.sh
   scripts/ukb_ppp_batch_manifest_runner_fast.py \
   scripts/colab_download_gigastroke_gwas.py \
   scripts/configure_gigastroke_outcomes.py \
+  scripts/estimate_instrument_batch_size.py \
   workflow/gigastroke_outcome_adapter.py \
   workflow/run_gigastroke_outcomes_batch.py
+
+echo "[TEST] Instrument-positive batch-size estimate"
+BATCH_SIZE_ESTIMATE="$("${PYTHON_BIN}" scripts/estimate_instrument_batch_size.py \
+  tests/fixtures/instrument_gene_status.tsv --target-probability 0.95)"
+printf '%s\n' "${BATCH_SIZE_ESTIMATE}"
+test "$(printf '%s\n' "${BATCH_SIZE_ESTIMATE}" | awk -F '\t' '$1 == "recommended_batch_size" {print $2}')" = "14"
 
 echo "[TEST] GIGASTROKE outcome adapter fixture"
 GIGASTROKE_OUT="${SMOKE_ROOT}/gigastroke"

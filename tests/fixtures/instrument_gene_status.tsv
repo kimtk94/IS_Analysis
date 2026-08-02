@@ -1,0 +1,11 @@
+batch_id	gene_symbol	ancestry	standardization_status	instrument_selection_status	n_filtered_rows
+batch_001	G1	EUR	completed	completed	3
+batch_001	G2	EUR	completed	completed_no_variants	0
+batch_001	G3	EUR	completed	completed_no_variants	0
+batch_001	G4	EUR	completed	completed_no_variants	0
+batch_001	G5	EUR	completed	completed_no_variants	0
+batch_001	G6	EUR	completed	completed	1
+batch_001	G7	EUR	completed	completed_no_variants	0
+batch_001	G8	EUR	completed	completed_no_variants	0
+batch_001	G9	EUR	completed	completed_no_variants	0
+batch_001	G10	EUR	completed	completed_no_variants	0
