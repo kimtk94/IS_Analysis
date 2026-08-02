@@ -1,8 +1,12 @@
 # IS_Analysis
 
+새 Git 저장소와 Drive V3 workspace로 이전할 때는
+[`docs/new_repository_migration_guide.md`](docs/new_repository_migration_guide.md)를
+먼저 따른다.
+
 This repository prepares paired UKB-PPP EUR/EAS pQTL exposures for downstream
 analysis. The production workflow is batch-oriented and restartable: it obtains
-10 paired genes at a time, validates every archive, filters instruments, and
+15 paired genes at a time, validates every archive, filters instruments, and
 writes EUR and EAS outputs separately.
 
 ## Real-data batch workflow
