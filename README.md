@@ -164,17 +164,31 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --stop-on-error
 ```
 
-For a storage-bounded IDO1 test, select only the 15-gene batch containing
+For a storage-bounded IDO1 test, first mount Google Drive and create the V3
+workspace. The setup helper creates missing directories under
+`/content/drive/MyDrive/IS_Analysis_V3`; when available, it copies only the
+download manifest and GRCh38 coordinate table from V2. It never copies raw
+archives or derived results:
+
+```bash
+CODE_ROOT="/content/IS_Analysis_V2"
+export WORK_ROOT="/content/drive/MyDrive/IS_Analysis_V3"
+cd "${CODE_ROOT}"
+bash scripts/setup_ido1_test_drive.sh
+source "${WORK_ROOT}/ido1_test.env"
+```
+
+Then select only the 15-gene batch containing
 `IDO1`, read at most 20 MB of each decompressed IDO1 summary member, and retain
 at most 1,000 lines (including the header) for every other gene:
 
 ```bash
 python3 -u "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
-  --qc-dir "${WORK_ROOT}/results/qc/ido1_test_pipeline" \
-  --outdir "${WORK_ROOT}/results/test/ido1/exposure_batches" \
-  --standardized-dir "${WORK_ROOT}/results/test/ido1/standardized/pqtl" \
-  --instrument-dir "${WORK_ROOT}/results/test/ido1/instrument_candidates" \
+  --qc-dir "${IDO1_TEST_QC_DIR}" \
+  --outdir "${IDO1_TEST_OUTDIR}" \
+  --standardized-dir "${IDO1_TEST_STANDARDIZED_DIR}" \
+  --instrument-dir "${IDO1_TEST_INSTRUMENT_DIR}" \
   --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
   --batch-size 15 \
