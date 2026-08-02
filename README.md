@@ -157,12 +157,39 @@ python3 "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
   --instrument-dir "${WORK_ROOT}/results/instrument_candidates" \
   --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
   --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
-  --batch-size 10 \
+  --batch-size 15 \
   --p-threshold 5e-8 \
   --run \
   --delete-raw-after-processing \
   --stop-on-error
 ```
+
+For a storage-bounded IDO1 test, select only the 15-gene batch containing
+`IDO1`, read at most 20 MB of each decompressed IDO1 summary member, and retain
+at most 1,000 lines (including the header) for every other gene:
+
+```bash
+python3 -u "${CODE_ROOT}/scripts/ukb_ppp_batch_manifest_runner_fast.py" \
+  --base "${WORK_ROOT}/data/rawdata/pqtl/selected_targets" \
+  --qc-dir "${WORK_ROOT}/results/qc/ido1_test_pipeline" \
+  --outdir "${WORK_ROOT}/results/test/ido1/exposure_batches" \
+  --standardized-dir "${WORK_ROOT}/results/test/ido1/standardized/pqtl" \
+  --instrument-dir "${WORK_ROOT}/results/test/ido1/instrument_candidates" \
+  --download-manifest "${WORK_ROOT}/data/metadata/ukb_ppp_download_manifest.tsv" \
+  --gene-coordinate-file "${WORK_ROOT}/data/reference/gene_coordinates_hg38.tsv" \
+  --batch-size 15 \
+  --focus-gene IDO1 \
+  --focus-max-bytes 20000000 \
+  --other-max-file-lines 1000 \
+  --run \
+  --stop-on-error
+```
+
+The tar transport itself is still downloaded and verified in full because a
+compressed archive member cannot be safely fetched as an arbitrary byte range.
+The 20 MB limit applies to the decompressed IDO1 summary-statistic stream used
+to materialize the test data. Raw deletion is intentionally omitted from this
+test command.
 
 The runner flushes current batch and phase messages to stdout. If Colab's
 `%%bash` output remains buffered in the notebook UI, use `python3 -u` in place
